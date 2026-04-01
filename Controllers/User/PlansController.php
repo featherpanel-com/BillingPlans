@@ -253,8 +253,52 @@ class PlansController
                 CreditsHelper::addUserCredits($userId, $priceCredits);
 
                 return ApiResponse::error(
-                    'That egg does not belong to the selected nest. Choose an egg from the same category as your nest.',
+                    'That spell does not belong to the selected realm. Choose a spell from the same realm.',
                     'SPELL_REALM_MISMATCH',
+                    400
+                );
+            }
+        }
+
+        // Plan is meant to provision a server: require both realm and spell to be configured and still present in the panel
+        $planExpectsServer = (!empty($plan['spell_id']) || !empty($plan['user_can_choose_spell']))
+            && (!empty($plan['realms_id']) || !empty($plan['user_can_choose_realm']));
+        if ($planExpectsServer) {
+            if (!$effectiveRealmId) {
+                CreditsHelper::addUserCredits($userId, $priceCredits);
+
+                return ApiResponse::error(
+                    'This product cannot create a server: no realm is set. An administrator must assign a realm on the plan or enable realm selection.',
+                    'REALM_NOT_CONFIGURED',
+                    400
+                );
+            }
+            if (!$effectiveSpellId) {
+                CreditsHelper::addUserCredits($userId, $priceCredits);
+
+                return ApiResponse::error(
+                    'This product cannot create a server: no spell (server type) is set. An administrator must assign a spell on the plan or enable spell selection.',
+                    'SPELL_NOT_CONFIGURED',
+                    400
+                );
+            }
+            $realmRow = Realm::getById($effectiveRealmId);
+            if ($realmRow === null) {
+                CreditsHelper::addUserCredits($userId, $priceCredits);
+
+                return ApiResponse::error(
+                    'The realm linked to this product was removed from the panel. An administrator must update the plan.',
+                    'REALM_NOT_FOUND',
+                    400
+                );
+            }
+            $spellExists = Spell::getSpellById($effectiveSpellId);
+            if ($spellExists === null) {
+                CreditsHelper::addUserCredits($userId, $priceCredits);
+
+                return ApiResponse::error(
+                    'The spell linked to this product was removed from the panel. An administrator must update the plan.',
+                    'SPELL_NOT_FOUND',
                     400
                 );
             }
@@ -345,16 +389,35 @@ class PlansController
 
             $spell = Spell::getSpellById($spellId);
             if (!$spell) {
-                return ['success' => false, 'error' => 'Spell (egg) not found', 'code' => 'SPELL_NOT_FOUND'];
+                return ['success' => false, 'error' => 'Spell not found or was deleted from the panel', 'code' => 'SPELL_NOT_FOUND'];
+            }
+
+            $realm = Realm::getById($realmId);
+            if ($realm === null) {
+                return ['success' => false, 'error' => 'Realm not found or was deleted from the panel', 'code' => 'REALM_NOT_FOUND'];
+            }
+
+            if ((int) ($spell['realm_id'] ?? 0) !== $realmId) {
+                return [
+                    'success' => false,
+                    'error' => 'Spell does not belong to the selected realm; fix the plan template in admin.',
+                    'code' => 'SPELL_REALM_MISMATCH',
+                ];
             }
 
             // Resolve node
             $nodeId = null;
+            $allNodes = Node::getAllNodes() ?: [];
             if (!empty($plan['node_id'])) {
                 $nodeId = (int) $plan['node_id'];
             } else {
-                // Auto-pick any node that has free allocations
-                $allNodes = Node::getAllNodes() ?: [];
+                if ($allNodes === []) {
+                    return [
+                        'success' => false,
+                        'error' => 'No nodes are configured in the panel. Add a node before selling server products.',
+                        'code' => 'NO_NODES_IN_PANEL',
+                    ];
+                }
                 foreach ($allNodes as $n) {
                     $free = Allocation::getAll(null, (int) $n['id'], null, 1, 0, true);
                     if (!empty($free)) {
@@ -365,18 +428,30 @@ class PlansController
             }
 
             if (!$nodeId) {
-                return ['success' => false, 'error' => 'No available node with free allocations', 'code' => 'NO_AVAILABLE_NODE'];
+                return [
+                    'success' => false,
+                    'error' => 'No node has free allocations. Add allocations or free an IP on a node.',
+                    'code' => 'NO_AVAILABLE_NODE',
+                ];
             }
 
             $node = Node::getNodeById($nodeId);
             if (!$node) {
-                return ['success' => false, 'error' => 'Node not found', 'code' => 'NODE_NOT_FOUND'];
+                return ['success' => false, 'error' => 'The selected node no longer exists', 'code' => 'NODE_NOT_FOUND'];
             }
 
             // Get free allocation
             $allocations = Allocation::getAll(null, $nodeId, null, 100, 0, true);
             if (empty($allocations)) {
-                return ['success' => false, 'error' => 'No free allocations on node', 'code' => 'NO_FREE_ALLOCATIONS'];
+                $hint = !empty($plan['node_id'])
+                    ? 'This plan uses a fixed node and it has no free IPs. Pick another node or create allocations.'
+                    : 'No free IPs on the chosen node.';
+
+                return [
+                    'success' => false,
+                    'error' => $hint,
+                    'code' => 'NO_FREE_ALLOCATIONS',
+                ];
             }
 
             shuffle($allocations);
@@ -391,6 +466,14 @@ class PlansController
                 if (is_array($images)) {
                     $image = array_values($images)[0] ?? '';
                 }
+            }
+            $image = is_string($image) ? trim($image) : '';
+            if ($image === '') {
+                return [
+                    'success' => false,
+                    'error' => 'Spell has no Docker image configured. Set docker image on the spell or an image override on the plan.',
+                    'code' => 'SPELL_DOCKER_IMAGE_MISSING',
+                ];
             }
 
             $serverName = trim($customName ?? '') ?: ($plan['name'] . ' - ' . $user['username']);
@@ -425,10 +508,22 @@ class PlansController
 
             $serverId = Server::createServer($serverData);
             if (!$serverId) {
-                return ['success' => false, 'error' => 'Failed to create server record', 'code' => 'CREATE_SERVER_FAILED'];
+                return [
+                    'success' => false,
+                    'error' => 'Could not save the server in the database. Check panel logs.',
+                    'code' => 'CREATE_SERVER_FAILED',
+                ];
             }
 
-            Allocation::assignToServer($allocationId, $serverId);
+            if (!Allocation::assignToServer($allocationId, $serverId)) {
+                Server::hardDeleteServer((int) $serverId);
+
+                return [
+                    'success' => false,
+                    'error' => 'Could not assign a network allocation to the server.',
+                    'code' => 'ALLOCATION_ASSIGN_FAILED',
+                ];
+            }
 
             // Set spell variables using defaults
             $spellVariables = SpellVariable::getVariablesBySpellId($spellId);
@@ -452,17 +547,27 @@ class PlansController
             $response = $wings->getServer()->createServer(['uuid' => $uuid, 'start_on_completion' => true]);
             if (!$response->isSuccessful()) {
                 Server::hardDeleteServer($serverId);
+                $err = $response->getError();
+                $err = is_string($err) && $err !== '' ? $err : 'Unknown Wings response';
 
-                return ['success' => false, 'error' => 'Wings error: ' . $response->getError(), 'code' => 'WINGS_ERROR'];
+                return [
+                    'success' => false,
+                    'error' => 'Daemon rejected server creation: ' . $err,
+                    'code' => 'WINGS_ERROR',
+                ];
             }
 
             $app->getLogger()->info("BillingPlans: Server {$uuid} provisioned for user #{$userId} (plan: {$plan['name']}).");
 
             return ['success' => true, 'uuid' => $uuid];
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $app->getLogger()->error('BillingPlans: Server provisioning failed: ' . $e->getMessage());
 
-            return ['success' => false, 'error' => $e->getMessage(), 'code' => 'PROVISION_EXCEPTION'];
+            return [
+                'success' => false,
+                'error' => 'Provisioning failed: ' . ($e->getMessage() !== '' ? $e->getMessage() : 'unexpected error'),
+                'code' => 'PROVISION_EXCEPTION',
+            ];
         }
     }
 }
