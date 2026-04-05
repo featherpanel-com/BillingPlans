@@ -237,21 +237,17 @@
     {
         $app = App::getInstance(false, true);
         $userId = (int) $user['id'];
-
         try {
             $spellId = (int) $plan['spell_id'];
             $realmId = (int) $plan['realms_id'];
-
             $spell = Spell::getSpellById($spellId);
             if (!$spell) {
                 return ['success' => false, 'error' => 'Spell not found or was deleted from the panel', 'code' => 'SPELL_NOT_FOUND'];
             }
-
             $realm = Realm::getById($realmId);
             if ($realm === null) {
                 return ['success' => false, 'error' => 'Realm not found or was deleted from the panel', 'code' => 'REALM_NOT_FOUND'];
             }
-
             if ((int) ($spell['realm_id'] ?? 0) !== $realmId) {
                 return [
                     'success' => false,
@@ -259,8 +255,6 @@
                     'code' => 'SPELL_REALM_MISMATCH',
                 ];
             }
-
-
             // Multi-node support: resolve node from node_ids (ordered)
             $requirements = [
                 'memory' => (int) ($plan['memory'] ?? 512),
@@ -268,11 +262,15 @@
                 'cpu' => (int) ($plan['cpu'] ?? 100),
             ];
             $nodeIds = \App\Addons\billingplans\Chat\Plan::getNodeIds($plan);
+            if (empty($nodeIds)) {
+                $allNodes = \App\Chat\Node::getAllNodes();
+                $nodeIds = array_map(fn($n) => (int)$n['id'], $allNodes);
+            }
             $nodeId = $this->resolveProvisionNode($nodeIds, $requirements);
             if (!$nodeId) {
                 return [
                     'success' => false,
-                    'error' => 'No selected node has enough free resources and a free allocation. Add allocations or free up resources.',
+                    'error' => 'No selected node has enough free resources and a free allocation.',
                     'code' => 'NO_AVAILABLE_NODE',
                 ];
             }
@@ -280,9 +278,120 @@
             if (!$node) {
                 return ['success' => false, 'error' => 'The selected node no longer exists', 'code' => 'NODE_NOT_FOUND'];
             }
-
-    // ...existing code...
-}
+            // Get free allocation
+            $allocations = Allocation::getAll(null, $nodeId, null, 100, 0, true);
+            if (empty($allocations)) {
+                $hint = !empty($plan['node_id'])
+                    ? 'This plan uses a fixed node and it has no free IPs. Pick another node or create allocations.'
+                    : 'No free IPs on the chosen node.';
+                return [
+                    'success' => false,
+                    'error' => $hint,
+                    'code' => 'NO_FREE_ALLOCATIONS',
+                ];
+            }
+            shuffle($allocations);
+            $allocation = $allocations[0];
+            $allocationId = (int) $allocation['id'];
+            // Determine startup and docker image
+            $startup = !empty($plan['startup_override']) ? $plan['startup_override'] : ($spell['startup'] ?? '');
+            $image = !empty($plan['image_override']) ? $plan['image_override'] : ($spell['docker_image'] ?? '');
+            if (empty($image) && !empty($spell['docker_images'])) {
+                $images = is_string($spell['docker_images']) ? json_decode($spell['docker_images'], true) : $spell['docker_images'];
+                if (is_array($images)) {
+                    $image = array_values($images)[0] ?? '';
+                }
+            }
+            $image = is_string($image) ? trim($image) : '';
+            if ($image === '') {
+                return [
+                    'success' => false,
+                    'error' => 'Spell has no Docker image configured. Set docker image on the spell or an image override on the plan.',
+                    'code' => 'SPELL_DOCKER_IMAGE_MISSING',
+                ];
+            }
+            $serverName = trim($customName ?? '') ?: ($plan['name'] . ' - ' . $user['username']);
+            $uuid = UUIDUtils::generateV4();
+            $uuidShort = substr(str_replace('-', '', UUIDUtils::generateV4()), 0, 8);
+            $serverData = [
+                'uuid' => $uuid,
+                'uuidShort' => $uuidShort,
+                'node_id' => $nodeId,
+                'name' => $serverName,
+                'owner_id' => $userId,
+                'memory' => (int) ($plan['memory'] ?? 512),
+                'swap' => (int) ($plan['swap'] ?? 0),
+                'disk' => (int) ($plan['disk'] ?? 1024),
+                'io' => (int) ($plan['io'] ?? 500),
+                'cpu' => (int) ($plan['cpu'] ?? 100),
+                'allocation_id' => $allocationId,
+                'realms_id' => $realmId,
+                'spell_id' => $spellId,
+                'startup' => $startup,
+                'image' => $image,
+                'description' => $plan['description'] ?? null,
+                'status' => 'installing',
+                'skip_scripts' => 0,
+                'oom_disabled' => 0,
+                'allocation_limit' => !empty($plan['allocation_limit']) ? (int) $plan['allocation_limit'] : null,
+                'database_limit' => (int) ($plan['database_limit'] ?? 0),
+                'backup_limit' => (int) ($plan['backup_limit'] ?? 0),
+            ];
+            $serverId = Server::createServer($serverData);
+            if (!$serverId) {
+                return [
+                    'success' => false,
+                    'error' => 'Could not save the server in the database. Check panel logs.',
+                    'code' => 'CREATE_SERVER_FAILED',
+                ];
+            }
+            if (!Allocation::assignToServer($allocationId, $serverId)) {
+                Server::hardDeleteServer((int) $serverId);
+                return [
+                    'success' => false,
+                    'error' => 'Could not assign a network allocation to the server.',
+                    'code' => 'ALLOCATION_ASSIGN_FAILED',
+                ];
+            }
+            // Set spell variables using defaults
+            $spellVariables = SpellVariable::getVariablesBySpellId($spellId);
+            $variablesToCreate = [];
+            foreach ($spellVariables as $sv) {
+                $default = $sv['default_value'] ?? '';
+                if ($default !== null && $default !== '') {
+                    $variablesToCreate[] = ['variable_id' => (int) $sv['id'], 'variable_value' => (string) $default];
+                } elseif (strpos($sv['rules'] ?? '', 'required') !== false) {
+                    Server::hardDeleteServer($serverId);
+                    return ['success' => false, 'error' => 'Required variable "' . $sv['name'] . '" has no default', 'code' => 'MISSING_REQUIRED_VARIABLE'];
+                }
+            }
+            if (!empty($variablesToCreate)) {
+                ServerVariable::createOrUpdateServerVariables($serverId, $variablesToCreate);
+            }
+            // Register with Wings
+            $wings = new Wings($node['fqdn'], $node['daemonListen'], $node['scheme'], $node['daemon_token'], 30);
+            $response = $wings->getServer()->createServer(['uuid' => $uuid, 'start_on_completion' => true]);
+            if (!$response->isSuccessful()) {
+                Server::hardDeleteServer($serverId);
+                $err = $response->getError();
+                $err = is_string($err) && $err !== '' ? $err : 'Unknown Wings response';
+                return [
+                    'success' => false,
+                    'error' => 'Daemon rejected server creation: ' . $err,
+                    'code' => 'WINGS_ERROR',
+                ];
+            }
+            $app->getLogger()->info("BillingPlans: Server {$uuid} provisioned for user #{$userId} (plan: {$plan['name']}).");
+            return ['success' => true, 'uuid' => $uuid];
+        } catch (\Throwable $e) {
+            $app->getLogger()->error('BillingPlans: Server provisioning failed: ' . $e->getMessage());
+            return [
+                'success' => false,
+                'error' => 'Provisioning failed: ' . ($e->getMessage() !== '' ? $e->getMessage() : 'unexpected error'),
+                'code' => 'PROVISION_EXCEPTION',
+            ];
+        }
+    }
 
     /**
      * Try each node in order, return first with enough resources and a free allocation.
@@ -299,7 +408,6 @@
         }
         return null;
     }
-
     /**
      * Check if node exists, is enabled, has enough free memory/disk/cpu, and at least one free allocation.
      * @param int $nodeId

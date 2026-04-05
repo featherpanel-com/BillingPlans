@@ -231,7 +231,11 @@ const openEdit = (plan: Plan) => {
     name: plan.name, description: plan.description, long_description: plan.long_description,
     price_credits: plan.price_credits, billing_period_days: plan.billing_period_days,
     is_active: !!plan.is_active, max_subscriptions: plan.max_subscriptions,
-    node_ids: Array.isArray(plan.node_ids) ? [...plan.node_ids] : (plan.node_id != null ? [plan.node_id] : []),
+    node_ids: Array.isArray(plan.node_ids)
+      ? [...plan.node_ids]
+      : typeof plan.node_ids === 'string'
+        ? JSON.parse(plan.node_ids)
+        : (plan.node_id != null ? [plan.node_id] : []),
     realms_id: plan.realms_id, spell_id: plan.spell_id,
     memory: plan.memory ?? 512, cpu: plan.cpu ?? 100, disk: plan.disk ?? 1024,
     swap: plan.swap ?? 0, io: plan.io ?? 500, backup_limit: plan.backup_limit ?? 0,
@@ -267,8 +271,6 @@ const onSpellChange = () => {
 const savePlan = async () => {
   try {
     const payload = { ...planForm.value };
-    // Remove legacy node_id if present, always send node_ids
-    delete payload.node_id;
     if (editingPlan.value) {
       await updatePlan(editingPlan.value.id, payload);
       toast.success("Plan updated!");

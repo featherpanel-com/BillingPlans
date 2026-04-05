@@ -86,13 +86,13 @@ class Plan
         $stmt = $pdo->prepare(
             'INSERT INTO ' . self::$table . '
              (category_id, name, description, long_description, price_credits, billing_period_days, is_active, max_subscriptions, server_config,
-              node_id, realms_id, user_can_choose_realm, allowed_realms,
+              node_ids, node_id, realms_id, user_can_choose_realm, allowed_realms,
               spell_id, user_can_choose_spell, allowed_spells,
               memory, cpu, disk, swap, io,
               backup_limit, database_limit, allocation_limit, startup_override, image_override)
              VALUES
              (:category_id, :name, :description, :long_description, :price_credits, :billing_period_days, :is_active, :max_subscriptions, :server_config,
-              :node_id, :realms_id, :user_can_choose_realm, :allowed_realms,
+              :node_ids, :node_id, :realms_id, :user_can_choose_realm, :allowed_realms,
               :spell_id, :user_can_choose_spell, :allowed_spells,
               :memory, :cpu, :disk, :swap, :io,
               :backup_limit, :database_limit, :allocation_limit, :startup_override, :image_override)'
