@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Checkbox } from "@/components/ui/checkbox";
+import { ref, onMounted, computed, Ref } from "vue";
 import { ref, onMounted, computed } from "vue";
 import { useToast } from "vue-toastification";
 import {
@@ -470,7 +471,7 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
                 <div class="relative">
                   <button type="button"
                     class="flex h-9 w-full rounded-lg border border-input bg-background pl-3 pr-8 py-2 text-sm text-left focus:outline-none focus:ring-2 focus:ring-ring appearance-none"
-                    @click="showNodesDropdown = !showNodesDropdown"
+                    @click="showNodesDropdown.value = !showNodesDropdown.value"
                   >
                     <span v-if="planForm.node_ids.length === 0" class="text-muted-foreground">Select nodes…</span>
                     <span v-else>
@@ -478,10 +479,10 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
                     </span>
                     <ChevronDown class="absolute right-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
                   </button>
-                  <div v-if="showNodesDropdown" class="absolute z-20 mt-1 w-full bg-card border border-border rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                  <div v-if="showNodesDropdown.value" class="absolute z-20 mt-1 w-full bg-card border border-border rounded-lg shadow-lg max-h-60 overflow-y-auto">
                     <div v-for="n in planOptions.nodes" :key="n.id" class="px-3 py-2 hover:bg-muted/50 flex items-center gap-2 cursor-pointer"
-                      @click.stop="planForm.node_ids = planForm.node_ids.includes(n.id) ? planForm.node_ids.filter(id => id !== n.id) : [...planForm.node_ids, n.id]">
-                      <Checkbox :model-value="planForm.node_ids.includes(n.id)" />
+                      @click.stop>
+                      <Checkbox :model-value="planForm.node_ids.includes(n.id)" @update:modelValue="checked => onNodeCheckboxChange(n.id, checked)" />
                       <span>{{ n.name }}</span>
                     </div>
                   </div>
@@ -489,10 +490,17 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
                 <p class="text-xs text-muted-foreground mt-1">Select one or more nodes. The first node with enough resources will be used for provisioning.</p>
               </div>
             // Dropdown state for node selection
-            import { onClickOutside } from 'vue'
             const showNodesDropdown = ref(false);
-            const nodesDropdownRef = ref();
-            onClickOutside(nodesDropdownRef, () => { showNodesDropdown.value = false; });
+
+            function onNodeCheckboxChange(nodeId: number, checked: boolean) {
+              if (checked) {
+                if (!planForm.value.node_ids.includes(nodeId)) {
+                  planForm.value.node_ids = [...planForm.value.node_ids, nodeId];
+                }
+              } else {
+                planForm.value.node_ids = planForm.value.node_ids.filter(id => id !== nodeId);
+              }
+            }
             </div>
 
             
