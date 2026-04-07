@@ -513,20 +513,22 @@ class PlansController
     /**
      * @param array<string,mixed> $plan
      * @param array<int,array<string,mixed>|null> $categoryCache
-        * @param array{
-        *   activeCounts: array<int,int>,
-        *   allRealms: array<int,array<string,mixed>>,
-        *   allSpells: array<int,array<string,mixed>>,
-        *   realmById: array<int,array<string,mixed>|null>,
-        *   spellById: array<int,array<string,mixed>|null>
-        * } $preloaded
+     * @param array{
+     *   activeCounts: array<int,int>,
+     *   allRealms: array<int,array<string,mixed>>,
+     *   allSpells: array<int,array<string,mixed>>,
+     *   realmById: array<int,array<string,mixed>|null>,
+     *   spellById: array<int,array<string,mixed>|null>
+     * } $preloaded
      * @return array<string,mixed>
      */
-        private function hydratePlan(array $plan, int $userCredits, array &$categoryCache, array &$preloaded): array
+    private function hydratePlan(array $plan, int $userCredits, array &$categoryCache, array &$preloaded): array
     {
         $plan['billing_period_label'] = Plan::getBillingPeriodLabel((int) ($plan['billing_period_days'] ?? 30));
         $plan['can_afford'] = $userCredits >= (int) ($plan['price_credits'] ?? 0);
-        $plan['has_server_template'] = !empty($plan['realms_id']) && !empty($plan['spell_id']);
+        $plan['has_server_template'] =
+            (!empty($plan['realms_id']) || !empty($plan['user_can_choose_realm']))
+            && (!empty($plan['spell_id']) || !empty($plan['user_can_choose_spell']));
 
         $planId = (int) ($plan['id'] ?? 0);
         $activeSubscriptionCount = (int) ($preloaded['activeCounts'][$planId] ?? 0);
@@ -609,13 +611,13 @@ class PlansController
      * @param array<string,mixed> $plan
      * @param int[] $allowedSpellIds
      * @param array<int,array{id:int,name:string}> $allowedRealmOptions
-        * @param array{
-        *   activeCounts: array<int,int>,
-        *   allRealms: array<int,array<string,mixed>>,
-        *   allSpells: array<int,array<string,mixed>>,
-        *   realmById: array<int,array<string,mixed>|null>,
-        *   spellById: array<int,array<string,mixed>|null>
-        * } $preloaded
+      * @param array{
+      *   activeCounts: array<int,int>,
+      *   allRealms: array<int,array<string,mixed>>,
+      *   allSpells: array<int,array<string,mixed>>,
+      *   realmById: array<int,array<string,mixed>|null>,
+      *   spellById: array<int,array<string,mixed>|null>
+      * } $preloaded
      * @return array<int,array{id:int,name:string,realm_id:int}>
      */
         private function resolveSpellOptions(array $plan, array $allowedSpellIds, array $allowedRealmOptions, array &$preloaded): array

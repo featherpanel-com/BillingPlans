@@ -519,8 +519,8 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
                     </span>
                     <ChevronDown class="absolute right-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
                   </button>
-                  <div id="plan-nodes-dropdown" v-if="showNodesDropdown" role="listbox" class="absolute z-20 mt-1 w-full bg-card border border-border rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                    <div v-for="n in planOptions.nodes" :key="n.id" class="px-3 py-2 hover:bg-muted/50 flex items-center gap-2" @click.stop>
+                  <div id="plan-nodes-dropdown" v-if="showNodesDropdown" role="listbox" aria-multiselectable="true" class="absolute z-20 mt-1 w-full bg-card border border-border rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                    <div v-for="n in planOptions.nodes" :key="n.id" role="option" :aria-selected="planForm.node_ids.includes(n.id)" class="px-3 py-2 hover:bg-muted/50 flex items-center gap-2" @click.stop>
                       <Checkbox :model-value="planForm.node_ids.includes(n.id)" @update:modelValue="checked => onNodeCheckboxChange(n.id, !!checked)">
                         {{ n.name }}
                       </Checkbox>
