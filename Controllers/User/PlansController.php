@@ -1,88 +1,135 @@
+<?php
 
-            // Set spell variables using defaults
-            $spellVariables = SpellVariable::getVariablesBySpellId($spellId);
-            $variablesToCreate = [];
-            foreach ($spellVariables as $sv) {
-                $default = $sv['default_value'] ?? '';
-                if ($default !== null && $default !== '') {
-                    $variablesToCreate[] = ['variable_id' => (int) $sv['id'], 'variable_value' => (string) $default];
-                } elseif (strpos($sv['rules'] ?? '', 'required') !== false) {
-                    Server::hardDeleteServer($serverId);
+/*
+ * This file is part of FeatherPanel.
+ *
+ * Copyright (C) 2025 MythicalSystems Studios
+ * Copyright (C) 2025 FeatherPanel Contributors
+ * Copyright (C) 2025 Cassian Gherman (aka NaysKutzu)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * See the LICENSE file or <https://www.gnu.org/licenses/>.
+ */
 
-                    return ['success' => false, 'error' => 'Required variable "' . $sv['name'] . '" has no default', 'code' => 'MISSING_REQUIRED_VARIABLE'];
-                }
-            }
-            if (!empty($variablesToCreate)) {
-                ServerVariable::createOrUpdateServerVariables($serverId, $variablesToCreate);
-            }
+namespace App\Addons\billingplans\Controllers\User;
 
-            // Register with Wings
-            $wings = new Wings($node['fqdn'], $node['daemonListen'], $node['scheme'], $node['daemon_token'], 30);
-            $response = $wings->getServer()->createServer(['uuid' => $uuid, 'start_on_completion' => true]);
-            if (!$response->isSuccessful()) {
-                Server::hardDeleteServer($serverId);
-                $err = $response->getError();
-                $err = is_string($err) && $err !== '' ? $err : 'Unknown Wings response';
+use App\App;
+use App\Chat\Node;
+use App\Chat\Realm;
+use App\Chat\Spell;
+use App\Chat\Server;
+use App\Chat\Activity;
+use App\Chat\Allocation;
+use App\Chat\SpellVariable;
+use App\Chat\ServerVariable;
+use App\Helpers\ApiResponse;
+use App\CloudFlare\CloudFlareRealIP;
+use App\Utils\UUIDUtils;
+use App\Services\Wings\Wings;
+use App\Addons\billingplans\Chat\Plan;
+use App\Addons\billingplans\Chat\Category;
+use App\Addons\billingplans\Chat\Subscription;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use App\Addons\billingcore\Helpers\CreditsHelper;
+use App\Addons\billingplans\Helpers\InvoiceHelper;
 
-                return [
-                    'success' => false,
-                    'error' => 'Daemon rejected server creation: ' . $err,
-                    'code' => 'WINGS_ERROR',
-                ];
-            }
-
-            $app->getLogger()->info("BillingPlans: Server {$uuid} provisioned for user #{$userId} (plan: {$plan['name']}).");
-
-            return ['success' => true, 'uuid' => $uuid];
-        } catch (\Throwable $e) {
-            $app->getLogger()->error('BillingPlans: Server provisioning failed: ' . $e->getMessage());
-
-            return [
-                'success' => false,
-                'error' => 'Provisioning failed: ' . ($e->getMessage() !== '' ? $e->getMessage() : 'unexpected error'),
-                'code' => 'PROVISION_EXCEPTION',
-            ];
-        }
-    }
-
-    /**
-     * Try each node in order, return first with enough resources and a free allocation.
-     * @param int[] $nodeIds
-     * @param array $requirements ['memory'=>int, 'disk'=>int, 'cpu'=>int]
-     * @return int|null
-     */
-    private function resolveProvisionNode(array $nodeIds, array $requirements): ?int
+class PlansController
+{
+    public function list(Request $request): Response
     {
-        foreach ($nodeIds as $nodeId) {
-            if ($this->nodeHasCapacity($nodeId, $requirements)) {
-                return $nodeId;
-            }
+        $user = $request->get('user');
+        $userId = (int) ($user['id'] ?? 0);
+        $userCredits = CreditsHelper::getUserCredits($userId);
+
+        $plans = Plan::getAll(true);
+        $categoryCache = [];
+
+        foreach ($plans as &$plan) {
+            $plan = $this->hydratePlan($plan, $userCredits, $categoryCache);
         }
-        return null;
+
+        return ApiResponse::success([
+            'data' => array_values($plans),
+            'user_credits' => $userCredits,
+        ], 'Plans retrieved successfully', 200);
     }
 
-    /**
-     * Check if node exists, is enabled, has enough free memory/disk/cpu, and at least one free allocation.
-     * @param int $nodeId
-     * @param array $requirements
-     * @return bool
-     */
-    private function nodeHasCapacity(int $nodeId, array $requirements): bool
+    public function get(Request $request, int $planId): Response
     {
-        $node = \App\Chat\Node::getNodeById($nodeId);
-        if (!$node || empty($node['is_enabled'])) return false;
-        // Check free resources (memory, disk, cpu)
-        $freeMem = (int)($node['memory'] ?? 0) - (int)($node['memory_used'] ?? 0);
-        $freeDisk = (int)($node['disk'] ?? 0) - (int)($node['disk_used'] ?? 0);
-        $freeCpu = (int)($node['cpu'] ?? 0) - (int)($node['cpu_used'] ?? 0);
-        if ($freeMem < $requirements['memory'] || $freeDisk < $requirements['disk'] || $freeCpu < $requirements['cpu']) {
-            return false;
+        $user = $request->get('user');
+        $userId = (int) ($user['id'] ?? 0);
+        $userCredits = CreditsHelper::getUserCredits($userId);
+
+        $plan = Plan::getById($planId);
+        if ($plan === null || (int) ($plan['is_active'] ?? 0) !== 1) {
+            return ApiResponse::error('Plan not found', 'PLAN_NOT_FOUND', 404);
         }
-        // At least one free allocation
-        $allocs = \App\Chat\Allocation::getAll(null, $nodeId, null, 1, 0, true);
-        if (empty($allocs)) return false;
-        return true;
+
+        $cache = [];
+        $plan = $this->hydratePlan($plan, $userCredits, $cache);
+
+        return ApiResponse::success($plan, 'Plan retrieved successfully', 200);
     }
+
+    public function subscribe(Request $request, int $planId): Response
+    {
+        $user = $request->get('user');
+        $userId = (int) ($user['id'] ?? 0);
+        $input = json_decode($request->getContent(), true) ?: [];
+
+        $plan = Plan::getById($planId);
+        if ($plan === null || (int) ($plan['is_active'] ?? 0) !== 1) {
+            return ApiResponse::error('Plan not found', 'PLAN_NOT_FOUND', 404);
+        }
+
+        $priceCredits = (int) ($plan['price_credits'] ?? 0);
+        $periodDays = max(1, (int) ($plan['billing_period_days'] ?? 30));
+
+        $maxSubscriptions = isset($plan['max_subscriptions']) && $plan['max_subscriptions'] !== null
+            ? (int) $plan['max_subscriptions']
+            : null;
+        if ($maxSubscriptions !== null && $maxSubscriptions > 0) {
+            $activeCount = Plan::getActiveSubscriptionCount((int) $plan['id']);
+            if ($activeCount >= $maxSubscriptions) {
+                return ApiResponse::error('This plan is sold out right now.', 'PLAN_SOLD_OUT', 400);
+            }
+        }
+
+        $currentCredits = CreditsHelper::getUserCredits($userId);
+        if ($currentCredits < $priceCredits) {
+            return ApiResponse::error('Insufficient credits for this plan.', 'INSUFFICIENT_CREDITS', 400);
+        }
+
+        if (!CreditsHelper::removeUserCredits($userId, $priceCredits)) {
+            return ApiResponse::error('Failed to deduct credits.', 'CREDITS_DEDUCTION_FAILED', 500);
+        }
+
+        $effectiveRealmId = !empty($plan['realms_id']) ? (int) $plan['realms_id'] : null;
+        if (!empty($plan['user_can_choose_realm'])) {
+            $chosenRealmId = isset($input['chosen_realm_id']) ? (int) $input['chosen_realm_id'] : null;
+            if (!$chosenRealmId) {
+                CreditsHelper::addUserCredits($userId, $priceCredits);
+
+                return ApiResponse::error('Please select a realm (nest) for your server.', 'REALM_REQUIRED', 400);
+            }
+            $allowedRealmIds = Plan::decodeIds($plan['allowed_realms'] ?? null);
+            if (!empty($allowedRealmIds) && !in_array($chosenRealmId, $allowedRealmIds, true)) {
+                CreditsHelper::addUserCredits($userId, $priceCredits);
+
+                return ApiResponse::error('The selected realm is not allowed for this plan.', 'REALM_NOT_ALLOWED', 400);
+            }
+            $effectiveRealmId = $chosenRealmId;
+        }
+
+        $effectiveSpellId = !empty($plan['spell_id']) ? (int) $plan['spell_id'] : null;
+        if (!empty($plan['user_can_choose_spell'])) {
+            $chosenSpellId = isset($input['chosen_spell_id']) ? (int) $input['chosen_spell_id'] : null;
+            if (!$chosenSpellId) {
                 CreditsHelper::addUserCredits($userId, $priceCredits);
 
                 return ApiResponse::error('Please select a spell (game type) for your server.', 'SPELL_REQUIRED', 400);
@@ -96,7 +143,6 @@
             $effectiveSpellId = $chosenSpellId;
         }
 
-        // Egg must belong to the nest (realm) we provision on
         if ($effectiveSpellId && $effectiveRealmId) {
             $spellRow = Spell::getSpellById($effectiveSpellId);
             if (!$spellRow) {
@@ -115,7 +161,6 @@
             }
         }
 
-        // Plan is meant to provision a server: require both realm and spell to be configured and still present in the panel
         $planExpectsServer = (!empty($plan['spell_id']) || !empty($plan['user_can_choose_spell']))
             && (!empty($plan['realms_id']) || !empty($plan['user_can_choose_realm']));
         if ($planExpectsServer) {
@@ -159,7 +204,6 @@
             }
         }
 
-        // Auto-create server if plan has a server template
         $serverUuid = null;
         if ($effectiveSpellId && $effectiveRealmId) {
             $planForProvision = $plan;
@@ -169,7 +213,6 @@
             if ($serverResult['success']) {
                 $serverUuid = $serverResult['uuid'];
             } else {
-                // Refund and abort
                 CreditsHelper::addUserCredits($userId, $priceCredits);
 
                 return ApiResponse::error(
@@ -197,7 +240,6 @@
 
         $subscription = Subscription::getById($subscriptionId);
 
-        // Generate a billingcore invoice for this purchase
         InvoiceHelper::createPurchaseInvoice(
             $userId,
             $planId,
@@ -237,6 +279,7 @@
     {
         $app = App::getInstance(false, true);
         $userId = (int) $user['id'];
+
         try {
             $spellId = (int) $plan['spell_id'];
             $realmId = (int) $plan['realms_id'];
@@ -255,17 +298,19 @@
                     'code' => 'SPELL_REALM_MISMATCH',
                 ];
             }
-            // Multi-node support: resolve node from node_ids (ordered)
+
             $requirements = [
                 'memory' => (int) ($plan['memory'] ?? 512),
                 'disk' => (int) ($plan['disk'] ?? 1024),
                 'cpu' => (int) ($plan['cpu'] ?? 100),
             ];
-            $nodeIds = \App\Addons\billingplans\Chat\Plan::getNodeIds($plan);
+
+            $nodeIds = Plan::getNodeIds($plan);
             if (empty($nodeIds)) {
-                $allNodes = \App\Chat\Node::getAllNodes();
-                $nodeIds = array_map(fn($n) => (int)$n['id'], $allNodes);
+                $allNodes = Node::getAllNodes();
+                $nodeIds = array_map(static fn ($n) => (int) $n['id'], $allNodes);
             }
+
             $nodeId = $this->resolveProvisionNode($nodeIds, $requirements);
             if (!$nodeId) {
                 return [
@@ -274,26 +319,29 @@
                     'code' => 'NO_AVAILABLE_NODE',
                 ];
             }
+
             $node = Node::getNodeById($nodeId);
             if (!$node) {
                 return ['success' => false, 'error' => 'The selected node no longer exists', 'code' => 'NODE_NOT_FOUND'];
             }
-            // Get free allocation
+
             $allocations = Allocation::getAll(null, $nodeId, null, 100, 0, true);
             if (empty($allocations)) {
                 $hint = !empty($plan['node_id'])
                     ? 'This plan uses a fixed node and it has no free IPs. Pick another node or create allocations.'
                     : 'No free IPs on the chosen node.';
+
                 return [
                     'success' => false,
                     'error' => $hint,
                     'code' => 'NO_FREE_ALLOCATIONS',
                 ];
             }
+
             shuffle($allocations);
             $allocation = $allocations[0];
             $allocationId = (int) $allocation['id'];
-            // Determine startup and docker image
+
             $startup = !empty($plan['startup_override']) ? $plan['startup_override'] : ($spell['startup'] ?? '');
             $image = !empty($plan['image_override']) ? $plan['image_override'] : ($spell['docker_image'] ?? '');
             if (empty($image) && !empty($spell['docker_images'])) {
@@ -310,9 +358,11 @@
                     'code' => 'SPELL_DOCKER_IMAGE_MISSING',
                 ];
             }
+
             $serverName = trim($customName ?? '') ?: ($plan['name'] . ' - ' . $user['username']);
             $uuid = UUIDUtils::generateV4();
             $uuidShort = substr(str_replace('-', '', UUIDUtils::generateV4()), 0, 8);
+
             $serverData = [
                 'uuid' => $uuid,
                 'uuidShort' => $uuidShort,
@@ -337,6 +387,7 @@
                 'database_limit' => (int) ($plan['database_limit'] ?? 0),
                 'backup_limit' => (int) ($plan['backup_limit'] ?? 0),
             ];
+
             $serverId = Server::createServer($serverData);
             if (!$serverId) {
                 return [
@@ -345,15 +396,17 @@
                     'code' => 'CREATE_SERVER_FAILED',
                 ];
             }
+
             if (!Allocation::assignToServer($allocationId, $serverId)) {
                 Server::hardDeleteServer((int) $serverId);
+
                 return [
                     'success' => false,
                     'error' => 'Could not assign a network allocation to the server.',
                     'code' => 'ALLOCATION_ASSIGN_FAILED',
                 ];
             }
-            // Set spell variables using defaults
+
             $spellVariables = SpellVariable::getVariablesBySpellId($spellId);
             $variablesToCreate = [];
             foreach ($spellVariables as $sv) {
@@ -362,29 +415,34 @@
                     $variablesToCreate[] = ['variable_id' => (int) $sv['id'], 'variable_value' => (string) $default];
                 } elseif (strpos($sv['rules'] ?? '', 'required') !== false) {
                     Server::hardDeleteServer($serverId);
+
                     return ['success' => false, 'error' => 'Required variable "' . $sv['name'] . '" has no default', 'code' => 'MISSING_REQUIRED_VARIABLE'];
                 }
             }
             if (!empty($variablesToCreate)) {
                 ServerVariable::createOrUpdateServerVariables($serverId, $variablesToCreate);
             }
-            // Register with Wings
+
             $wings = new Wings($node['fqdn'], $node['daemonListen'], $node['scheme'], $node['daemon_token'], 30);
             $response = $wings->getServer()->createServer(['uuid' => $uuid, 'start_on_completion' => true]);
             if (!$response->isSuccessful()) {
                 Server::hardDeleteServer($serverId);
                 $err = $response->getError();
                 $err = is_string($err) && $err !== '' ? $err : 'Unknown Wings response';
+
                 return [
                     'success' => false,
                     'error' => 'Daemon rejected server creation: ' . $err,
                     'code' => 'WINGS_ERROR',
                 ];
             }
+
             $app->getLogger()->info("BillingPlans: Server {$uuid} provisioned for user #{$userId} (plan: {$plan['name']}).");
+
             return ['success' => true, 'uuid' => $uuid];
         } catch (\Throwable $e) {
             $app->getLogger()->error('BillingPlans: Server provisioning failed: ' . $e->getMessage());
+
             return [
                 'success' => false,
                 'error' => 'Provisioning failed: ' . ($e->getMessage() !== '' ? $e->getMessage() : 'unexpected error'),
@@ -396,8 +454,7 @@
     /**
      * Try each node in order, return first with enough resources and a free allocation.
      * @param int[] $nodeIds
-     * @param array $requirements ['memory'=>int, 'disk'=>int, 'cpu'=>int]
-     * @return int|null
+     * @param array{memory:int,disk:int,cpu:int} $requirements
      */
     private function resolveProvisionNode(array $nodeIds, array $requirements): ?int
     {
@@ -406,159 +463,170 @@
                 return $nodeId;
             }
         }
+
         return null;
     }
+
     /**
      * Check if node exists, is enabled, has enough free memory/disk/cpu, and at least one free allocation.
-     * @param int $nodeId
-     * @param array $requirements
-     * @return bool
+     * @param array{memory:int,disk:int,cpu:int} $requirements
      */
     private function nodeHasCapacity(int $nodeId, array $requirements): bool
     {
-        $node = \App\Chat\Node::getNodeById($nodeId);
-        if (!$node || empty($node['is_enabled'])) return false;
-        // Check free resources (memory, disk, cpu)
-        $freeMem = (int)($node['memory'] ?? 0) - (int)($node['memory_used'] ?? 0);
-        $freeDisk = (int)($node['disk'] ?? 0) - (int)($node['disk_used'] ?? 0);
-        $freeCpu = (int)($node['cpu'] ?? 0) - (int)($node['cpu_used'] ?? 0);
+        $node = Node::getNodeById($nodeId);
+        if (!$node || empty($node['is_enabled'])) {
+            return false;
+        }
+
+        $freeMem = (int) ($node['memory'] ?? 0) - (int) ($node['memory_used'] ?? 0);
+        $freeDisk = (int) ($node['disk'] ?? 0) - (int) ($node['disk_used'] ?? 0);
+        $freeCpu = (int) ($node['cpu'] ?? 0) - (int) ($node['cpu_used'] ?? 0);
+
         if ($freeMem < $requirements['memory'] || $freeDisk < $requirements['disk'] || $freeCpu < $requirements['cpu']) {
             return false;
         }
-        // At least one free allocation
-        $allocs = \App\Chat\Allocation::getAll(null, $nodeId, null, 1, 0, true);
-        if (empty($allocs)) return false;
-        return true;
+
+        $allocs = Allocation::getAll(null, $nodeId, null, 1, 0, true);
+
+        return !empty($allocs);
     }
 
-            // Get free allocation
-            $allocations = Allocation::getAll(null, $nodeId, null, 100, 0, true);
-            if (empty($allocations)) {
-                $hint = !empty($plan['node_id'])
-                    ? 'This plan uses a fixed node and it has no free IPs. Pick another node or create allocations.'
-                    : 'No free IPs on the chosen node.';
+    /**
+     * @param array<string,mixed> $plan
+     * @param array<int,array<string,mixed>|null> $categoryCache
+     * @return array<string,mixed>
+     */
+    private function hydratePlan(array $plan, int $userCredits, array &$categoryCache): array
+    {
+        $plan['billing_period_label'] = Plan::getBillingPeriodLabel((int) ($plan['billing_period_days'] ?? 30));
+        $plan['can_afford'] = $userCredits >= (int) ($plan['price_credits'] ?? 0);
+        $plan['has_server_template'] = !empty($plan['realms_id']) && !empty($plan['spell_id']);
 
-                return [
-                    'success' => false,
-                    'error' => $hint,
-                    'code' => 'NO_FREE_ALLOCATIONS',
-                ];
+        $activeSubscriptionCount = Plan::getActiveSubscriptionCount((int) ($plan['id'] ?? 0));
+        $plan['active_subscription_count'] = $activeSubscriptionCount;
+
+        $maxSubscriptions = isset($plan['max_subscriptions']) && $plan['max_subscriptions'] !== null
+            ? (int) $plan['max_subscriptions']
+            : null;
+        $plan['slots_available'] = $maxSubscriptions === null ? null : max(0, $maxSubscriptions - $activeSubscriptionCount);
+        $plan['is_sold_out'] = $maxSubscriptions !== null && $maxSubscriptions > 0 && $activeSubscriptionCount >= $maxSubscriptions;
+
+        $plan['user_can_choose_realm'] = (bool) ($plan['user_can_choose_realm'] ?? false);
+        $plan['user_can_choose_spell'] = (bool) ($plan['user_can_choose_spell'] ?? false);
+
+        $allowedRealmIds = Plan::decodeIds($plan['allowed_realms'] ?? null);
+        $allowedSpellIds = Plan::decodeIds($plan['allowed_spells'] ?? null);
+
+        $plan['allowed_realms_options'] = $this->resolveRealmOptions($plan, $allowedRealmIds);
+        $plan['allowed_spells_options'] = $this->resolveSpellOptions($plan, $allowedSpellIds, $plan['allowed_realms_options']);
+
+        $categoryId = (int) ($plan['category_id'] ?? 0);
+        if ($categoryId > 0) {
+            if (!array_key_exists($categoryId, $categoryCache)) {
+                $cat = Category::getById($categoryId);
+                $categoryCache[$categoryId] = $cat ? [
+                    'id' => (int) $cat['id'],
+                    'name' => $cat['name'],
+                    'icon' => $cat['icon'],
+                    'color' => $cat['color'],
+                ] : null;
             }
-
-            shuffle($allocations);
-            $allocation = $allocations[0];
-            $allocationId = (int) $allocation['id'];
-
-            // Determine startup and docker image
-            $startup = !empty($plan['startup_override']) ? $plan['startup_override'] : ($spell['startup'] ?? '');
-            $image = !empty($plan['image_override']) ? $plan['image_override'] : ($spell['docker_image'] ?? '');
-            if (empty($image) && !empty($spell['docker_images'])) {
-                $images = is_string($spell['docker_images']) ? json_decode($spell['docker_images'], true) : $spell['docker_images'];
-                if (is_array($images)) {
-                    $image = array_values($images)[0] ?? '';
-                }
-            }
-            $image = is_string($image) ? trim($image) : '';
-            if ($image === '') {
-                return [
-                    'success' => false,
-                    'error' => 'Spell has no Docker image configured. Set docker image on the spell or an image override on the plan.',
-                    'code' => 'SPELL_DOCKER_IMAGE_MISSING',
-                ];
-            }
-
-            $serverName = trim($customName ?? '') ?: ($plan['name'] . ' - ' . $user['username']);
-
-            $uuid = UUIDUtils::generateV4();
-            $uuidShort = substr(str_replace('-', '', UUIDUtils::generateV4()), 0, 8);
-
-            $serverData = [
-                'uuid' => $uuid,
-                'uuidShort' => $uuidShort,
-                'node_id' => $nodeId,
-                'name' => $serverName,
-                'owner_id' => $userId,
-                'memory' => (int) ($plan['memory'] ?? 512),
-                'swap' => (int) ($plan['swap'] ?? 0),
-                'disk' => (int) ($plan['disk'] ?? 1024),
-                'io' => (int) ($plan['io'] ?? 500),
-                'cpu' => (int) ($plan['cpu'] ?? 100),
-                'allocation_id' => $allocationId,
-                'realms_id' => $realmId,
-                'spell_id' => $spellId,
-                'startup' => $startup,
-                'image' => $image,
-                'description' => $plan['description'] ?? null,
-                'status' => 'installing',
-                'skip_scripts' => 0,
-                'oom_disabled' => 0,
-                'allocation_limit' => !empty($plan['allocation_limit']) ? (int) $plan['allocation_limit'] : null,
-                'database_limit' => (int) ($plan['database_limit'] ?? 0),
-                'backup_limit' => (int) ($plan['backup_limit'] ?? 0),
-            ];
-
-            $serverId = Server::createServer($serverData);
-            if (!$serverId) {
-                return [
-                    'success' => false,
-                    'error' => 'Could not save the server in the database. Check panel logs.',
-                    'code' => 'CREATE_SERVER_FAILED',
-                ];
-            }
-
-            if (!Allocation::assignToServer($allocationId, $serverId)) {
-                Server::hardDeleteServer((int) $serverId);
-
-                return [
-                    'success' => false,
-                    'error' => 'Could not assign a network allocation to the server.',
-                    'code' => 'ALLOCATION_ASSIGN_FAILED',
-                ];
-            }
-
-            // Set spell variables using defaults
-            $spellVariables = SpellVariable::getVariablesBySpellId($spellId);
-            $variablesToCreate = [];
-            foreach ($spellVariables as $sv) {
-                $default = $sv['default_value'] ?? '';
-                if ($default !== null && $default !== '') {
-                    $variablesToCreate[] = ['variable_id' => (int) $sv['id'], 'variable_value' => (string) $default];
-                } elseif (strpos($sv['rules'] ?? '', 'required') !== false) {
-                    Server::hardDeleteServer($serverId);
-
-                    return ['success' => false, 'error' => 'Required variable "' . $sv['name'] . '" has no default', 'code' => 'MISSING_REQUIRED_VARIABLE'];
-                }
-            }
-            if (!empty($variablesToCreate)) {
-                ServerVariable::createOrUpdateServerVariables($serverId, $variablesToCreate);
-            }
-
-            // Register with Wings
-            $wings = new Wings($node['fqdn'], $node['daemonListen'], $node['scheme'], $node['daemon_token'], 30);
-            $response = $wings->getServer()->createServer(['uuid' => $uuid, 'start_on_completion' => true]);
-            if (!$response->isSuccessful()) {
-                Server::hardDeleteServer($serverId);
-                $err = $response->getError();
-                $err = is_string($err) && $err !== '' ? $err : 'Unknown Wings response';
-
-                return [
-                    'success' => false,
-                    'error' => 'Daemon rejected server creation: ' . $err,
-                    'code' => 'WINGS_ERROR',
-                ];
-            }
-
-            $app->getLogger()->info("BillingPlans: Server {$uuid} provisioned for user #{$userId} (plan: {$plan['name']}).");
-
-            return ['success' => true, 'uuid' => $uuid];
-        } catch (\Throwable $e) {
-            $app->getLogger()->error('BillingPlans: Server provisioning failed: ' . $e->getMessage());
-
-            return [
-                'success' => false,
-                'error' => 'Provisioning failed: ' . ($e->getMessage() !== '' ? $e->getMessage() : 'unexpected error'),
-                'code' => 'PROVISION_EXCEPTION',
-            ];
+            $plan['category'] = $categoryCache[$categoryId];
+        } else {
+            $plan['category'] = null;
         }
+
+        return $plan;
+    }
+
+    /**
+     * @param array<string,mixed> $plan
+     * @param int[] $allowedRealmIds
+     * @return array<int,array{id:int,name:string}>
+     */
+    private function resolveRealmOptions(array $plan, array $allowedRealmIds): array
+    {
+        $options = [];
+
+        if (!empty($plan['user_can_choose_realm'])) {
+            if (!empty($allowedRealmIds)) {
+                foreach ($allowedRealmIds as $realmId) {
+                    $realm = Realm::getById((int) $realmId);
+                    if ($realm !== null) {
+                        $options[] = ['id' => (int) $realm['id'], 'name' => (string) $realm['name']];
+                    }
+                }
+            } else {
+                $allRealms = Realm::getAll(null, 500, 0) ?: [];
+                foreach ($allRealms as $realm) {
+                    $options[] = ['id' => (int) $realm['id'], 'name' => (string) $realm['name']];
+                }
+            }
+        } elseif (!empty($plan['realms_id'])) {
+            $realm = Realm::getById((int) $plan['realms_id']);
+            if ($realm !== null) {
+                $options[] = ['id' => (int) $realm['id'], 'name' => (string) $realm['name']];
+            }
+        }
+
+        return array_values($options);
+    }
+
+    /**
+     * @param array<string,mixed> $plan
+     * @param int[] $allowedSpellIds
+     * @param array<int,array{id:int,name:string}> $allowedRealmOptions
+     * @return array<int,array{id:int,name:string,realm_id:int}>
+     */
+    private function resolveSpellOptions(array $plan, array $allowedSpellIds, array $allowedRealmOptions): array
+    {
+        $options = [];
+        $allowedRealmSet = [];
+        foreach ($allowedRealmOptions as $opt) {
+            $allowedRealmSet[(int) $opt['id']] = true;
+        }
+
+        if (!empty($plan['user_can_choose_spell'])) {
+            if (!empty($allowedSpellIds)) {
+                foreach ($allowedSpellIds as $spellId) {
+                    $spell = Spell::getSpellById((int) $spellId);
+                    if ($spell !== null) {
+                        $realmId = (int) ($spell['realm_id'] ?? 0);
+                        if (!empty($allowedRealmSet) && !isset($allowedRealmSet[$realmId])) {
+                            continue;
+                        }
+                        $options[] = [
+                            'id' => (int) $spell['id'],
+                            'name' => (string) $spell['name'],
+                            'realm_id' => $realmId,
+                        ];
+                    }
+                }
+            } else {
+                $allSpells = Spell::getAllSpells() ?: [];
+                foreach ($allSpells as $spell) {
+                    $realmId = (int) ($spell['realm_id'] ?? 0);
+                    if (!empty($allowedRealmSet) && !isset($allowedRealmSet[$realmId])) {
+                        continue;
+                    }
+                    $options[] = [
+                        'id' => (int) $spell['id'],
+                        'name' => (string) $spell['name'],
+                        'realm_id' => $realmId,
+                    ];
+                }
+            }
+        } elseif (!empty($plan['spell_id'])) {
+            $spell = Spell::getSpellById((int) $plan['spell_id']);
+            if ($spell !== null) {
+                $options[] = [
+                    'id' => (int) $spell['id'],
+                    'name' => (string) $spell['name'],
+                    'realm_id' => (int) ($spell['realm_id'] ?? 0),
+                ];
+            }
+        }
+
+        return array_values($options);
     }
 }
