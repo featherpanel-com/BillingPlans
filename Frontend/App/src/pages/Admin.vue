@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Checkbox } from "@/components/ui/checkbox";
 import { ref, onMounted, computed } from "vue";
 import { useToast } from "vue-toastification";
 import {
@@ -110,6 +111,26 @@ const emptyForm = (): PlanFormData => ({
 });
 const planForm = ref<PlanFormData>(emptyForm());
 
+const showNodesDropdown = ref(false);
+
+function onNodeCheckboxChange(nodeId: number, checked: boolean) {
+  if (checked) {
+    if (!planForm.value.node_ids.includes(nodeId)) {
+      planForm.value.node_ids = [...planForm.value.node_ids, nodeId];
+    }
+  } else {
+    planForm.value.node_ids = planForm.value.node_ids.filter((id) => id !== nodeId);
+  }
+}
+
+function onNodesDropdownFocusOut(event: FocusEvent) {
+  const current = event.currentTarget as HTMLElement | null;
+  const next = event.relatedTarget as Node | null;
+  if (!current || !next || !current.contains(next)) {
+    showNodesDropdown.value = false;
+  }
+}
+
 const filteredSpells = computed(() =>
   planForm.value.realms_id
     ? planOptions.value.spells.filter((s) => s.realm_id === planForm.value.realms_id)
@@ -123,8 +144,26 @@ const allowedSpellsPool = computed(() =>
     : planOptions.value.spells
 );
 
-function toggleAllowedId(list: number[], id: number): number[] {
-  return list.includes(id) ? list.filter((v) => v !== id) : [...list, id];
+
+
+function onAllowedRealmCheckboxChange(realmId: number, checked: boolean) {
+  if (checked) {
+    if (!planForm.value.allowed_realms.includes(realmId)) {
+      planForm.value.allowed_realms = [...planForm.value.allowed_realms, realmId];
+    }
+  } else {
+    planForm.value.allowed_realms = planForm.value.allowed_realms.filter((id) => id !== realmId);
+  }
+}
+
+function onAllowedSpellCheckboxChange(spellId: number, checked: boolean) {
+  if (checked) {
+    if (!planForm.value.allowed_spells.includes(spellId)) {
+      planForm.value.allowed_spells = [...planForm.value.allowed_spells, spellId];
+    }
+  } else {
+    planForm.value.allowed_spells = planForm.value.allowed_spells.filter((id) => id !== spellId);
+  }
 }
 
 function getPeriodLabel(days: number) {
@@ -466,12 +505,27 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
               </div>
               <div>
                 <label class="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Nodes</label>
-                <div class="relative">
-                  <select v-model="planForm.node_ids" multiple
-                    class="flex h-9 w-full rounded-lg border border-input bg-background pl-3 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring appearance-none">
-                    <option v-for="n in planOptions.nodes" :key="n.id" :value="n.id">{{ n.name }}</option>
-                  </select>
-                  <ChevronDown class="absolute right-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+                <div class="relative" @keydown.esc="showNodesDropdown = false" @focusout="onNodesDropdownFocusOut">
+                  <button type="button"
+                    class="flex h-9 w-full rounded-lg border border-input bg-background pl-3 pr-8 py-2 text-sm text-left focus:outline-none focus:ring-2 focus:ring-ring appearance-none"
+                    :aria-expanded="showNodesDropdown"
+                    aria-haspopup="listbox"
+                    aria-controls="plan-nodes-dropdown"
+                    @click="showNodesDropdown = !showNodesDropdown"
+                  >
+                    <span v-if="planForm.node_ids.length === 0" class="text-muted-foreground">Select nodes…</span>
+                    <span v-else>
+                      {{ planOptions.nodes.filter(n => planForm.node_ids.includes(n.id)).map(n => n.name).join(', ') }}
+                    </span>
+                    <ChevronDown class="absolute right-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  </button>
+                  <div id="plan-nodes-dropdown" v-if="showNodesDropdown" role="listbox" aria-multiselectable="true" class="absolute z-20 mt-1 w-full bg-card border border-border rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                    <div v-for="n in planOptions.nodes" :key="n.id" role="option" :aria-selected="planForm.node_ids.includes(n.id)" class="px-3 py-2 hover:bg-muted/50 flex items-center gap-2" @click.stop>
+                      <Checkbox :model-value="planForm.node_ids.includes(n.id)" @update:modelValue="checked => onNodeCheckboxChange(n.id, !!checked)">
+                        {{ n.name }}
+                      </Checkbox>
+                    </div>
+                  </div>
                 </div>
                 <p class="text-xs text-muted-foreground mt-1">Select one or more nodes. The first node with enough resources will be used for provisioning.</p>
               </div>
@@ -503,8 +557,12 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
                       <label v-for="r in planOptions.realms" :key="r.id"
                         class="flex items-center gap-2 text-xs px-2 py-1.5 rounded-md cursor-pointer transition-colors"
                         :class="planForm.allowed_realms.includes(r.id) ? 'bg-primary/15 text-primary border border-primary/30' : 'bg-background border border-border hover:bg-muted/50'">
-                        <input type="checkbox" class="sr-only" :checked="planForm.allowed_realms.includes(r.id)"
-                          @change="planForm.allowed_realms = toggleAllowedId(planForm.allowed_realms, r.id)" />
+                        <input
+                          type="checkbox"
+                          class="sr-only"
+                          :checked="planForm.allowed_realms.includes(r.id)"
+                          @change="onAllowedRealmCheckboxChange(r.id, !planForm.allowed_realms.includes(r.id))"
+                        />
                         <span class="w-3 h-3 rounded border flex-shrink-0 flex items-center justify-center transition-colors"
                           :class="planForm.allowed_realms.includes(r.id) ? 'bg-primary border-primary' : 'border-muted-foreground/40'">
                           <svg v-if="planForm.allowed_realms.includes(r.id)" class="w-2 h-2 text-white" fill="none" viewBox="0 0 12 12"><path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -539,8 +597,12 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
                       <label v-for="s in allowedSpellsPool" :key="s.id"
                         class="flex items-center gap-2 text-xs px-2 py-1.5 rounded-md cursor-pointer transition-colors"
                         :class="planForm.allowed_spells.includes(s.id) ? 'bg-primary/15 text-primary border border-primary/30' : 'bg-background border border-border hover:bg-muted/50'">
-                        <input type="checkbox" class="sr-only" :checked="planForm.allowed_spells.includes(s.id)"
-                          @change="planForm.allowed_spells = toggleAllowedId(planForm.allowed_spells, s.id)" />
+                        <input
+                          type="checkbox"
+                          class="sr-only"
+                          :checked="planForm.allowed_spells.includes(s.id)"
+                          @change="onAllowedSpellCheckboxChange(s.id, !planForm.allowed_spells.includes(s.id))"
+                        />
                         <span class="w-3 h-3 rounded border flex-shrink-0 flex items-center justify-center transition-colors"
                           :class="planForm.allowed_spells.includes(s.id) ? 'bg-primary border-primary' : 'border-muted-foreground/40'">
                           <svg v-if="planForm.allowed_spells.includes(s.id)" class="w-2 h-2 text-white" fill="none" viewBox="0 0 12 12"><path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
