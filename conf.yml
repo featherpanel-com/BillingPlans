@@ -4,7 +4,7 @@ plugin:
   description: 'Sell servers as renewable billing plans with credit-based billing — a full WHMCS-style subscription engine for FeatherPanel!'
   flags:
     - hasEvents
-  version: 1.0.0
+  version: 1.3.0
   target: v2
   author:
     - NaysKutzu
