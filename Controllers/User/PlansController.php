@@ -29,7 +29,6 @@ use App\Chat\SpellVariable;
 use App\Chat\ServerVariable;
 use App\Helpers\ApiResponse;
 use App\CloudFlare\CloudFlareRealIP;
-use App\Utils\UUIDUtils;
 use App\Services\Wings\Wings;
 use App\Addons\billingplans\Chat\Plan;
 use App\Addons\billingplans\Chat\Category;
@@ -379,8 +378,8 @@ class PlansController
             }
 
             $serverName = trim($customName ?? '') ?: ($plan['name'] . ' - ' . $user['username']);
-            $uuid = UUIDUtils::generateV4();
-            $uuidShort = substr(str_replace('-', '', UUIDUtils::generateV4()), 0, 8);
+            $uuid = $this->generateUuidV4();
+            $uuidShort = substr(str_replace('-', '', $this->generateUuidV4()), 0, 8);
 
             $serverData = [
                 'uuid' => $uuid,
@@ -806,5 +805,14 @@ class PlansController
         if ($server && !empty($server['id'])) {
             Server::hardDeleteServer((int) $server['id']);
         }
+    }
+
+    private function generateUuidV4(): string
+    {
+        $data = random_bytes(16);
+        $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
+        $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
+
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
     }
 }
