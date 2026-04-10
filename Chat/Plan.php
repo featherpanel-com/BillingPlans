@@ -108,7 +108,7 @@ class Plan
             'server_config' => isset($data['server_config']) ? (is_array($data['server_config']) ? json_encode($data['server_config']) : $data['server_config']) : null,
             'max_subscriptions' => (isset($data['max_subscriptions']) && $data['max_subscriptions'] !== null && $data['max_subscriptions'] !== '') ? (int) $data['max_subscriptions'] : null,
             // Multi-node support: store node_ids as JSON, fallback to node_id for legacy
-            'node_ids' => isset($data['node_ids']) && is_array($data['node_ids']) ? json_encode(array_map('intval', $data['node_ids'])) : (isset($data['node_id']) && $data['node_id'] ? json_encode([(int)$data['node_id']]) : null),
+            'node_ids' => isset($data['node_ids']) && is_array($data['node_ids']) ? json_encode(array_map('intval', $data['node_ids'])) : (isset($data['node_id']) && $data['node_id'] ? json_encode([(int) $data['node_id']]) : null),
             'node_id' => isset($data['node_id']) && $data['node_id'] ? (int) $data['node_id'] : null, // legacy
             'realms_id' => isset($data['realms_id']) && $data['realms_id'] ? (int) $data['realms_id'] : null,
             'user_can_choose_realm' => isset($data['user_can_choose_realm']) ? (int) (bool) $data['user_can_choose_realm'] : 0,
@@ -173,8 +173,8 @@ class Plan
     }
 
     /**
-     * Normalize node selection for a plan (node_ids[] or legacy node_id)
-     * @param array $plan
+     * Normalize node selection for a plan (node_ids[] or legacy node_id).
+     *
      * @return int[]
      */
     public static function getNodeIds(array $plan): array
@@ -186,8 +186,9 @@ class Plan
             }
         }
         if (!empty($plan['node_id'])) {
-            return [(int)$plan['node_id']];
+            return [(int) $plan['node_id']];
         }
+
         return [];
     }
 

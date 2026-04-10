@@ -150,3 +150,33 @@ body::-webkit-scrollbar-thumb:hover {
   padding-top: 0.5rem;
   padding-bottom: 0.5rem;
 }
+
+@layer components {
+  .billing-select-wrap {
+    @apply relative;
+  }
+
+  .billing-select {
+    @apply flex h-9 w-full appearance-none rounded-lg border border-input/80 bg-background/90 pl-3 pr-9 py-2 text-sm shadow-sm transition-colors;
+    @apply hover:border-border focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring;
+    @apply disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .billing-select-icon {
+    @apply pointer-events-none absolute right-2.5 top-2.5 h-4 w-4 text-muted-foreground/80;
+  }
+
+  .billing-multiselect-trigger {
+    @apply relative flex h-9 w-full rounded-lg border border-input/80 bg-background/90 pl-3 pr-9 py-2 text-left text-sm shadow-sm transition-colors;
+    @apply hover:border-border focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring;
+  }
+
+  .billing-multiselect-panel {
+    @apply absolute z-20 mt-1 w-full overflow-y-auto rounded-lg border border-border bg-card shadow-lg;
+    max-height: 15rem;
+  }
+
+  .billing-multiselect-option {
+    @apply flex items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-muted/50;
+  }
+}

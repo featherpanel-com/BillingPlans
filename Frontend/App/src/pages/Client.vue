@@ -264,15 +264,18 @@ onMounted(loadData);
           <div>
             <label class="block text-xs font-medium text-muted-foreground mb-1.5">Nest <span class="text-red-400">*</span></label>
             <p class="text-xs text-muted-foreground mb-2">Game category for your server.</p>
-            <select
-              v-model="chosenRealmId"
-              class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option disabled :value="null">Select a nest…</option>
-              <option v-for="r in planToSubscribe.allowed_realms_options" :key="r.id" :value="r.id">
-                {{ r.name }}
-              </option>
-            </select>
+            <div class="billing-select-wrap">
+              <select
+                v-model="chosenRealmId"
+                class="billing-select"
+              >
+                <option disabled :value="null">Select a nest…</option>
+                <option v-for="r in planToSubscribe.allowed_realms_options" :key="r.id" :value="r.id">
+                  {{ r.name }}
+                </option>
+              </select>
+              <ChevronDown class="billing-select-icon" />
+            </div>
           </div>
         </div>
 
@@ -287,18 +290,21 @@ onMounted(loadData);
               <template v-else-if="subscribeFilteredSpells.length === 0">No eggs for this nest — ask an admin to allow eggs for this nest.</template>
               <template v-else>Only eggs for your selected nest are listed.</template>
             </p>
-            <select
-              v-model="chosenSpellId"
-              :disabled="subscribeFilteredSpells.length === 0"
-              class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
-            >
-              <option disabled :value="null">
-                {{ subscribeFilteredSpells.length ? "Choose an egg…" : "No eggs for this nest" }}
-              </option>
-              <option v-for="s in subscribeFilteredSpells" :key="s.id" :value="s.id">
-                {{ s.name }}
-              </option>
-            </select>
+            <div class="billing-select-wrap">
+              <select
+                v-model="chosenSpellId"
+                :disabled="subscribeFilteredSpells.length === 0"
+                class="billing-select"
+              >
+                <option disabled :value="null">
+                  {{ subscribeFilteredSpells.length ? "Choose an egg…" : "No eggs for this nest" }}
+                </option>
+                <option v-for="s in subscribeFilteredSpells" :key="s.id" :value="s.id">
+                  {{ s.name }}
+                </option>
+              </select>
+              <ChevronDown class="billing-select-icon" />
+            </div>
           </div>
         </div>
 

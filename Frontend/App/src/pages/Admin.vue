@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { Checkbox } from "@/components/ui/checkbox";
 import { ref, onMounted, computed } from "vue";
 import { useToast } from "vue-toastification";
 import {
@@ -111,24 +110,16 @@ const emptyForm = (): PlanFormData => ({
 });
 const planForm = ref<PlanFormData>(emptyForm());
 
-const showNodesDropdown = ref(false);
-
-function onNodeCheckboxChange(nodeId: number, checked: boolean) {
-  if (checked) {
-    if (!planForm.value.node_ids.includes(nodeId)) {
-      planForm.value.node_ids = [...planForm.value.node_ids, nodeId];
-    }
-  } else {
+function toggleNodeSelection(nodeId: number) {
+  if (planForm.value.node_ids.includes(nodeId)) {
     planForm.value.node_ids = planForm.value.node_ids.filter((id) => id !== nodeId);
+    return;
   }
+  planForm.value.node_ids = [...planForm.value.node_ids, nodeId];
 }
 
-function onNodesDropdownFocusOut(event: FocusEvent) {
-  const current = event.currentTarget as HTMLElement | null;
-  const next = event.relatedTarget as Node | null;
-  if (!current || !next || !current.contains(next)) {
-    showNodesDropdown.value = false;
-  }
+function clearSelectedNodes() {
+  planForm.value.node_ids = [];
 }
 
 const filteredSpells = computed(() =>
@@ -405,15 +396,15 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
             
             <div class="md:col-span-2">
               <label class="block text-sm font-medium mb-1.5 flex items-center gap-1.5"><Tag class="h-3.5 w-3.5 text-muted-foreground" />Category</label>
-              <div class="relative">
+              <div class="billing-select-wrap">
                 <select v-model.number="planForm.category_id"
-                  class="flex h-9 w-full rounded-lg border border-input bg-background pl-3 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring appearance-none">
+                  class="billing-select">
                   <option :value="null">— No category —</option>
                   <option v-for="c in planOptions.categories" :key="c.id" :value="c.id">
                     {{ c.icon ? c.icon + ' ' : '' }}{{ c.name }}
                   </option>
                 </select>
-                <ChevronDown class="absolute right-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+                <ChevronDown class="billing-select-icon" />
               </div>
               <p v-if="!planOptions.categories.length" class="text-xs text-muted-foreground mt-1">
                 No categories yet — <button type="button" @click="activeTab = 'categories'" class="text-primary hover:underline">create one first</button>.
@@ -428,13 +419,13 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
 
             <div>
               <label class="block text-sm font-medium mb-1.5">Billing Period</label>
-              <div class="relative">
+              <div class="billing-select-wrap">
                 <select v-model.number="planForm.billing_period_days"
-                  class="flex h-9 w-full rounded-lg border border-input bg-background pl-3 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring appearance-none">
+                  class="billing-select">
                   <option v-for="p in PRESET_PERIODS" :key="p.days" :value="p.days">{{ p.label }} ({{ p.days }}d)</option>
                   <option v-if="!PRESET_PERIODS.find((p) => p.days === planForm.billing_period_days)" :value="planForm.billing_period_days">Custom ({{ planForm.billing_period_days }}d)</option>
                 </select>
-                <ChevronDown class="absolute right-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+                <ChevronDown class="billing-select-icon" />
               </div>
             </div>
 
@@ -483,48 +474,67 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label class="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Nest (Realm)</label>
-                <div class="relative">
+                <div class="billing-select-wrap">
                   <select v-model.number="planForm.realms_id" @change="onRealmChange"
-                    class="flex h-9 w-full rounded-lg border border-input bg-background pl-3 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring appearance-none">
+                    class="billing-select">
                     <option :value="null">— None —</option>
                     <option v-for="r in planOptions.realms" :key="r.id" :value="r.id">{{ r.name }}</option>
                   </select>
-                  <ChevronDown class="absolute right-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  <ChevronDown class="billing-select-icon" />
                 </div>
               </div>
               <div>
                 <label class="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Egg (Spell)</label>
-                <div class="relative">
+                <div class="billing-select-wrap">
                   <select v-model.number="planForm.spell_id" @change="onSpellChange" :disabled="!planForm.realms_id"
-                    class="flex h-9 w-full rounded-lg border border-input bg-background pl-3 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring appearance-none disabled:opacity-50 disabled:cursor-not-allowed">
+                    class="billing-select">
                     <option :value="null">— Select egg —</option>
                     <option v-for="s in filteredSpells" :key="s.id" :value="s.id">{{ s.name }}</option>
                   </select>
-                  <ChevronDown class="absolute right-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  <ChevronDown class="billing-select-icon" />
                 </div>
               </div>
               <div>
                 <label class="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Nodes</label>
-                <div class="relative" @keydown.esc="showNodesDropdown = false" @focusout="onNodesDropdownFocusOut">
-                  <button type="button"
-                    class="flex h-9 w-full rounded-lg border border-input bg-background pl-3 pr-8 py-2 text-sm text-left focus:outline-none focus:ring-2 focus:ring-ring appearance-none"
-                    :aria-expanded="showNodesDropdown"
-                    aria-haspopup="listbox"
-                    aria-controls="plan-nodes-dropdown"
-                    @click="showNodesDropdown = !showNodesDropdown"
-                  >
-                    <span v-if="planForm.node_ids.length === 0" class="text-muted-foreground">Select nodes…</span>
-                    <span v-else>
-                      {{ planOptions.nodes.filter(n => planForm.node_ids.includes(n.id)).map(n => n.name).join(', ') }}
-                    </span>
-                    <ChevronDown class="absolute right-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
-                  </button>
-                  <div id="plan-nodes-dropdown" v-if="showNodesDropdown" role="listbox" aria-multiselectable="true" class="absolute z-20 mt-1 w-full bg-card border border-border rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                    <div v-for="n in planOptions.nodes" :key="n.id" role="option" :aria-selected="planForm.node_ids.includes(n.id)" class="px-3 py-2 hover:bg-muted/50 flex items-center gap-2" @click.stop>
-                      <Checkbox :model-value="planForm.node_ids.includes(n.id)" @update:modelValue="checked => onNodeCheckboxChange(n.id, !!checked)">
-                        {{ n.name }}
-                      </Checkbox>
-                    </div>
+                <div class="rounded-lg border border-border bg-muted/20 p-3">
+                  <div class="mb-3 flex items-center justify-between gap-2">
+                    <p class="text-xs text-muted-foreground">
+                      {{ planForm.node_ids.length }} selected
+                    </p>
+                    <button
+                      v-if="planForm.node_ids.length > 0"
+                      type="button"
+                      @click="clearSelectedNodes"
+                      class="text-xs text-primary hover:underline"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+
+                  <div class="grid grid-cols-2 gap-2">
+                    <button
+                      v-for="n in planOptions.nodes"
+                      :key="n.id"
+                      type="button"
+                      @click="toggleNodeSelection(n.id)"
+                      :class="[
+                        'rounded-lg border px-3 py-2 text-left transition-all',
+                        planForm.node_ids.includes(n.id)
+                          ? 'border-primary/50 bg-primary/10 shadow-sm'
+                          : 'border-border bg-background hover:border-primary/30 hover:bg-muted/40'
+                      ]"
+                    >
+                      <div class="flex items-center justify-between gap-2">
+                        <p class="truncate text-xs font-medium text-foreground">{{ n.name }}</p>
+                        <span
+                          :class="[
+                            'h-2 w-2 rounded-full',
+                            planForm.node_ids.includes(n.id) ? 'bg-primary' : 'bg-muted-foreground/40'
+                          ]"
+                        />
+                      </div>
+                      <p class="mt-0.5 text-[10px] text-muted-foreground">Node #{{ n.id }}</p>
+                    </button>
                   </div>
                 </div>
                 <p class="text-xs text-muted-foreground mt-1">Select one or more nodes. The first node with enough resources will be used for provisioning.</p>
@@ -941,15 +951,18 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
         <div class="flex items-center gap-3 mb-4 flex-wrap">
           <input v-model="subsSearch" @input="subsPage = 1; loadSubscriptions()" type="text" placeholder="Search user, plan..."
             class="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring w-full md:w-64" />
-          <select v-model="subsStatusFilter" @change="subsPage = 1; loadSubscriptions()"
-            class="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+          <div class="billing-select-wrap w-full md:w-52">
+            <select v-model="subsStatusFilter" @change="subsPage = 1; loadSubscriptions()"
+              class="billing-select">
             <option value="">All Statuses</option>
             <option value="pending">Pending</option>
             <option value="active">Active</option>
             <option value="suspended">Suspended</option>
             <option value="cancelled">Cancelled</option>
             <option value="expired">Expired</option>
-          </select>
+            </select>
+            <ChevronDown class="billing-select-icon" />
+          </div>
           <button @click="loadSubscriptions" class="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent transition-colors">
             <RefreshCw class="h-3.5 w-3.5" />Refresh
           </button>
