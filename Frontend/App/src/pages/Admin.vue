@@ -530,7 +530,6 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
                 <p class="text-xs text-muted-foreground mt-1">Select one or more nodes. The first node with enough resources will be used for provisioning.</p>
               </div>
             </div>
-            </div>
 
             
             <div class="border-t border-border pt-4 space-y-4">
