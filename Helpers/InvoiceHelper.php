@@ -34,7 +34,7 @@ class InvoiceHelper
      * @param int $planId The plan ID
      * @param string $planName Human-readable plan name
      * @param int $subscriptionId The new subscription ID
-     * @param int $priceCredits Credits charged
+     * @param array<string,mixed> $chargeBreakdown Charge breakdown from Plan::calculateChargeBreakdown()
      * @param int $periodDays Billing period length
      */
     public static function createPurchaseInvoice(
@@ -42,7 +42,7 @@ class InvoiceHelper
         int $planId,
         string $planName,
         int $subscriptionId,
-        int $priceCredits,
+        array $chargeBreakdown,
         int $periodDays,
     ): ?array {
         if (!SettingsHelper::getGenerateInvoices()) {
@@ -54,6 +54,13 @@ class InvoiceHelper
             $currencyCode = $currency['code'] ?? 'EUR';
 
             $periodLabel = self::periodLabel($periodDays);
+            $baseCredits = (int) ($chargeBreakdown['base_credits'] ?? 0);
+            $taxCredits = (int) ($chargeBreakdown['tax_credits'] ?? 0);
+            $taxRatePercent = (float) ($chargeBreakdown['tax_rate_percent'] ?? 0);
+            $extraChargeCredits = (int) ($chargeBreakdown['extra_charge_credits'] ?? 0);
+            $extraChargePercent = (float) ($chargeBreakdown['extra_charge_percent'] ?? 0);
+            $extraChargeName = (string) ($chargeBreakdown['extra_charge_name'] ?? 'Additional charge');
+            $totalCredits = (int) ($chargeBreakdown['total_credits'] ?? $baseCredits);
 
             $invoiceData = [
                 'status' => 'paid',
@@ -67,10 +74,27 @@ class InvoiceHelper
                 [
                     'description' => "Plan: $planName — Initial Purchase ($periodLabel)",
                     'quantity' => 1.00,
-                    'unit_price' => (float) $priceCredits,
-                    'total' => (float) $priceCredits,
+                    'unit_price' => (float) $baseCredits,
+                    'total' => (float) $baseCredits,
                 ],
             ];
+            if ($taxCredits > 0) {
+                $itemsData[] = [
+                    'description' => "Tax ({$taxRatePercent}%)",
+                    'quantity' => 1.00,
+                    'unit_price' => (float) $taxCredits,
+                    'total' => (float) $taxCredits,
+                ];
+            }
+            if ($extraChargeCredits > 0) {
+                $itemsData[] = [
+                    'description' => "{$extraChargeName} ({$extraChargePercent}%)",
+                    'quantity' => 1.00,
+                    'unit_price' => (float) $extraChargeCredits,
+                    'total' => (float) $extraChargeCredits,
+                ];
+            }
+            $invoiceData['notes'] = "Plan purchase for subscription #$subscriptionId. Amount is denominated in credits, not real currency. Total charged: {$totalCredits} credits.";
 
             return BillingHelper::createInvoiceWithItems($userId, $invoiceData, $itemsData);
         } catch (\Throwable $e) {
@@ -88,7 +112,7 @@ class InvoiceHelper
      * @param int $userId The user's ID
      * @param int $subscriptionId The subscription ID
      * @param string $planName Human-readable plan name
-     * @param int $priceCredits Credits charged
+     * @param array<string,mixed> $chargeBreakdown Charge breakdown from Plan::calculateChargeBreakdown()
      * @param int $periodDays Billing period length
      * @param string $nextRenewal Next renewal date string
      */
@@ -96,7 +120,7 @@ class InvoiceHelper
         int $userId,
         int $subscriptionId,
         string $planName,
-        int $priceCredits,
+        array $chargeBreakdown,
         int $periodDays,
         string $nextRenewal,
     ): ?array {
@@ -109,6 +133,13 @@ class InvoiceHelper
             $currencyCode = $currency['code'] ?? 'EUR';
 
             $periodLabel = self::periodLabel($periodDays);
+            $baseCredits = (int) ($chargeBreakdown['base_credits'] ?? 0);
+            $taxCredits = (int) ($chargeBreakdown['tax_credits'] ?? 0);
+            $taxRatePercent = (float) ($chargeBreakdown['tax_rate_percent'] ?? 0);
+            $extraChargeCredits = (int) ($chargeBreakdown['extra_charge_credits'] ?? 0);
+            $extraChargePercent = (float) ($chargeBreakdown['extra_charge_percent'] ?? 0);
+            $extraChargeName = (string) ($chargeBreakdown['extra_charge_name'] ?? 'Additional charge');
+            $totalCredits = (int) ($chargeBreakdown['total_credits'] ?? $baseCredits);
 
             $invoiceData = [
                 'status' => 'paid',
@@ -122,10 +153,27 @@ class InvoiceHelper
                 [
                     'description' => "Plan: $planName — Renewal ($periodLabel)",
                     'quantity' => 1.00,
-                    'unit_price' => (float) $priceCredits,
-                    'total' => (float) $priceCredits,
+                    'unit_price' => (float) $baseCredits,
+                    'total' => (float) $baseCredits,
                 ],
             ];
+            if ($taxCredits > 0) {
+                $itemsData[] = [
+                    'description' => "Tax ({$taxRatePercent}%)",
+                    'quantity' => 1.00,
+                    'unit_price' => (float) $taxCredits,
+                    'total' => (float) $taxCredits,
+                ];
+            }
+            if ($extraChargeCredits > 0) {
+                $itemsData[] = [
+                    'description' => "{$extraChargeName} ({$extraChargePercent}%)",
+                    'quantity' => 1.00,
+                    'unit_price' => (float) $extraChargeCredits,
+                    'total' => (float) $extraChargeCredits,
+                ];
+            }
+            $invoiceData['notes'] = "Automatic renewal for subscription #$subscriptionId. Next renewal: $nextRenewal. Amount is denominated in credits, not real currency. Total charged: {$totalCredits} credits.";
 
             return BillingHelper::createInvoiceWithItems($userId, $invoiceData, $itemsData);
         } catch (\Throwable $e) {

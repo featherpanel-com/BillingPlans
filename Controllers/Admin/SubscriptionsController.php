@@ -378,6 +378,11 @@ class SubscriptionsController
     {
         $row['server_id'] = null;
         $row['server_name'] = null;
+        $breakdown = Plan::calculateChargeBreakdown($row);
+        $row['base_credits'] = (int) $breakdown['base_credits'];
+        $row['tax_credits'] = (int) $breakdown['tax_credits'];
+        $row['extra_charge_credits'] = (int) $breakdown['extra_charge_credits'];
+        $row['total_credits'] = (int) $breakdown['total_credits'];
         $uuid = $row['server_uuid'] ?? null;
         if (!empty($uuid) && is_string($uuid)) {
             $server = Server::getServerByUuid($uuid);

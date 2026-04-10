@@ -86,12 +86,14 @@ class Plan
         $stmt = $pdo->prepare(
             'INSERT INTO ' . self::$table . '
              (category_id, name, description, long_description, price_credits, billing_period_days, is_active, max_subscriptions, server_config,
+              tax_rate_percent, extra_charge_percent, extra_charge_name,
               node_ids, node_id, realms_id, user_can_choose_realm, allowed_realms,
               spell_id, user_can_choose_spell, allowed_spells,
               memory, cpu, disk, swap, io,
               backup_limit, database_limit, allocation_limit, startup_override, image_override)
              VALUES
              (:category_id, :name, :description, :long_description, :price_credits, :billing_period_days, :is_active, :max_subscriptions, :server_config,
+              :tax_rate_percent, :extra_charge_percent, :extra_charge_name,
               :node_ids, :node_id, :realms_id, :user_can_choose_realm, :allowed_realms,
               :spell_id, :user_can_choose_spell, :allowed_spells,
               :memory, :cpu, :disk, :swap, :io,
@@ -106,6 +108,9 @@ class Plan
             'billing_period_days' => (int) ($data['billing_period_days'] ?? 30),
             'is_active' => isset($data['is_active']) ? (int) $data['is_active'] : 1,
             'server_config' => isset($data['server_config']) ? (is_array($data['server_config']) ? json_encode($data['server_config']) : $data['server_config']) : null,
+            'tax_rate_percent' => self::normalizePercentage($data['tax_rate_percent'] ?? 0),
+            'extra_charge_percent' => self::normalizePercentage($data['extra_charge_percent'] ?? 0),
+            'extra_charge_name' => isset($data['extra_charge_name']) && trim((string) $data['extra_charge_name']) !== '' ? trim((string) $data['extra_charge_name']) : null,
             'max_subscriptions' => (isset($data['max_subscriptions']) && $data['max_subscriptions'] !== null && $data['max_subscriptions'] !== '') ? (int) $data['max_subscriptions'] : null,
             // Multi-node support: store node_ids as JSON, fallback to node_id for legacy
             'node_ids' => isset($data['node_ids']) && is_array($data['node_ids']) ? json_encode(array_map('intval', $data['node_ids'])) : (isset($data['node_id']) && $data['node_id'] ? json_encode([(int) $data['node_id']]) : null),
@@ -139,6 +144,7 @@ class Plan
         $allowed = [
             'category_id',
             'name', 'description', 'long_description', 'price_credits', 'billing_period_days', 'is_active', 'max_subscriptions', 'server_config',
+            'tax_rate_percent', 'extra_charge_percent', 'extra_charge_name',
             'node_ids', 'node_id', 'realms_id', 'user_can_choose_realm', 'allowed_realms',
             'spell_id', 'user_can_choose_spell', 'allowed_spells',
             'memory', 'cpu', 'disk', 'swap', 'io',
@@ -157,6 +163,10 @@ class Plan
                     $params[$field] = is_array($data[$field]) ? json_encode(array_map('intval', $data[$field])) : null;
                 } elseif (in_array($field, ['user_can_choose_realm', 'user_can_choose_spell'], true)) {
                     $params[$field] = (int) (bool) $data[$field];
+                } elseif (in_array($field, ['tax_rate_percent', 'extra_charge_percent'], true)) {
+                    $params[$field] = self::normalizePercentage($data[$field]);
+                } elseif ($field === 'extra_charge_name') {
+                    $params[$field] = isset($data[$field]) && trim((string) $data[$field]) !== '' ? trim((string) $data[$field]) : null;
                 } else {
                     $params[$field] = $data[$field];
                 }
@@ -244,6 +254,49 @@ class Plan
             $days === 365 => 'Annually',
             default => "Every {$days} Days",
         };
+    }
+
+    /**
+     * Calculate base/tax/custom/total credit amounts from a plan row.
+     *
+     * @return array{base_credits:int,tax_credits:int,extra_charge_credits:int,total_credits:int,tax_rate_percent:float,extra_charge_percent:float,extra_charge_name:string}
+     */
+    public static function calculateChargeBreakdown(array $plan): array
+    {
+        $baseCredits = max(0, (int) ($plan['price_credits'] ?? 0));
+        $taxRatePercent = self::normalizePercentage($plan['tax_rate_percent'] ?? 0);
+        $extraChargePercent = self::normalizePercentage($plan['extra_charge_percent'] ?? 0);
+        $extraChargeName = trim((string) ($plan['extra_charge_name'] ?? 'Additional charge'));
+        if ($extraChargeName === '') {
+            $extraChargeName = 'Additional charge';
+        }
+
+        $taxCredits = (int) round($baseCredits * ($taxRatePercent / 100), 0, PHP_ROUND_HALF_UP);
+        $extraChargeCredits = (int) round($baseCredits * ($extraChargePercent / 100), 0, PHP_ROUND_HALF_UP);
+        $totalCredits = max(0, $baseCredits + $taxCredits + $extraChargeCredits);
+
+        return [
+            'base_credits' => $baseCredits,
+            'tax_credits' => $taxCredits,
+            'extra_charge_credits' => $extraChargeCredits,
+            'total_credits' => $totalCredits,
+            'tax_rate_percent' => $taxRatePercent,
+            'extra_charge_percent' => $extraChargePercent,
+            'extra_charge_name' => $extraChargeName,
+        ];
+    }
+
+    private static function normalizePercentage(mixed $value): float
+    {
+        $number = is_numeric($value) ? (float) $value : 0.0;
+        if ($number < 0) {
+            $number = 0.0;
+        }
+        if ($number > 1000) {
+            $number = 1000.0;
+        }
+
+        return round($number, 2);
     }
 
     /** Encode int[] → JSON string (or null if empty). */

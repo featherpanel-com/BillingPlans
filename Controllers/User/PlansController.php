@@ -102,7 +102,8 @@ class PlansController
             return ApiResponse::error('Plan not found', 'PLAN_NOT_FOUND', 404);
         }
 
-        $priceCredits = (int) ($plan['price_credits'] ?? 0);
+        $chargeBreakdown = Plan::calculateChargeBreakdown($plan);
+        $totalChargeCredits = (int) $chargeBreakdown['total_credits'];
         $periodDays = max(1, (int) ($plan['billing_period_days'] ?? 30));
 
         $maxSubscriptions = isset($plan['max_subscriptions']) && $plan['max_subscriptions'] !== null
@@ -116,11 +117,11 @@ class PlansController
         }
 
         $currentCredits = CreditsHelper::getUserCredits($userId);
-        if ($currentCredits < $priceCredits) {
+        if ($currentCredits < $totalChargeCredits) {
             return ApiResponse::error('Insufficient credits for this plan.', 'INSUFFICIENT_CREDITS', 400);
         }
 
-        if (!CreditsHelper::removeUserCredits($userId, $priceCredits)) {
+        if (!CreditsHelper::removeUserCredits($userId, $totalChargeCredits)) {
             return ApiResponse::error('Failed to deduct credits.', 'CREDITS_DEDUCTION_FAILED', 500);
         }
 
@@ -128,13 +129,13 @@ class PlansController
         if (!empty($plan['user_can_choose_realm'])) {
             $chosenRealmId = isset($input['chosen_realm_id']) ? (int) $input['chosen_realm_id'] : null;
             if (!$chosenRealmId) {
-                CreditsHelper::addUserCredits($userId, $priceCredits);
+                CreditsHelper::addUserCredits($userId, $totalChargeCredits);
 
                 return ApiResponse::error('Please select a realm (nest) for your server.', 'REALM_REQUIRED', 400);
             }
             $allowedRealmIds = Plan::decodeIds($plan['allowed_realms'] ?? null);
             if (!empty($allowedRealmIds) && !in_array($chosenRealmId, $allowedRealmIds, true)) {
-                CreditsHelper::addUserCredits($userId, $priceCredits);
+                CreditsHelper::addUserCredits($userId, $totalChargeCredits);
 
                 return ApiResponse::error('The selected realm is not allowed for this plan.', 'REALM_NOT_ALLOWED', 400);
             }
@@ -145,13 +146,13 @@ class PlansController
         if (!empty($plan['user_can_choose_spell'])) {
             $chosenSpellId = isset($input['chosen_spell_id']) ? (int) $input['chosen_spell_id'] : null;
             if (!$chosenSpellId) {
-                CreditsHelper::addUserCredits($userId, $priceCredits);
+                CreditsHelper::addUserCredits($userId, $totalChargeCredits);
 
                 return ApiResponse::error('Please select a spell (game type) for your server.', 'SPELL_REQUIRED', 400);
             }
             $allowedSpellIds = Plan::decodeIds($plan['allowed_spells'] ?? null);
             if (!empty($allowedSpellIds) && !in_array($chosenSpellId, $allowedSpellIds, true)) {
-                CreditsHelper::addUserCredits($userId, $priceCredits);
+                CreditsHelper::addUserCredits($userId, $totalChargeCredits);
 
                 return ApiResponse::error('The selected spell is not allowed for this plan.', 'SPELL_NOT_ALLOWED', 400);
             }
@@ -161,12 +162,12 @@ class PlansController
         if ($effectiveSpellId && $effectiveRealmId) {
             $spellRow = Spell::getSpellById($effectiveSpellId);
             if (!$spellRow) {
-                CreditsHelper::addUserCredits($userId, $priceCredits);
+                CreditsHelper::addUserCredits($userId, $totalChargeCredits);
 
                 return ApiResponse::error('The selected game type is invalid.', 'SPELL_NOT_FOUND', 400);
             }
             if ((int) ($spellRow['realm_id'] ?? 0) !== $effectiveRealmId) {
-                CreditsHelper::addUserCredits($userId, $priceCredits);
+                CreditsHelper::addUserCredits($userId, $totalChargeCredits);
 
                 return ApiResponse::error(
                     'That spell does not belong to the selected realm. Choose a spell from the same realm.',
@@ -180,7 +181,7 @@ class PlansController
             && (!empty($plan['realms_id']) || !empty($plan['user_can_choose_realm']));
         if ($planExpectsServer) {
             if (!$effectiveRealmId) {
-                CreditsHelper::addUserCredits($userId, $priceCredits);
+                CreditsHelper::addUserCredits($userId, $totalChargeCredits);
 
                 return ApiResponse::error(
                     'This product cannot create a server: no realm is set. An administrator must assign a realm on the plan or enable realm selection.',
@@ -189,7 +190,7 @@ class PlansController
                 );
             }
             if (!$effectiveSpellId) {
-                CreditsHelper::addUserCredits($userId, $priceCredits);
+                CreditsHelper::addUserCredits($userId, $totalChargeCredits);
 
                 return ApiResponse::error(
                     'This product cannot create a server: no spell (server type) is set. An administrator must assign a spell on the plan or enable spell selection.',
@@ -199,7 +200,7 @@ class PlansController
             }
             $realmRow = Realm::getById($effectiveRealmId);
             if ($realmRow === null) {
-                CreditsHelper::addUserCredits($userId, $priceCredits);
+                CreditsHelper::addUserCredits($userId, $totalChargeCredits);
 
                 return ApiResponse::error(
                     'The realm linked to this product was removed from the panel. An administrator must update the plan.',
@@ -209,7 +210,7 @@ class PlansController
             }
             $spellExists = Spell::getSpellById($effectiveSpellId);
             if ($spellExists === null) {
-                CreditsHelper::addUserCredits($userId, $priceCredits);
+                CreditsHelper::addUserCredits($userId, $totalChargeCredits);
 
                 return ApiResponse::error(
                     'The spell linked to this product was removed from the panel. An administrator must update the plan.',
@@ -228,7 +229,7 @@ class PlansController
             if ($serverResult['success']) {
                 $serverUuid = $serverResult['uuid'];
             } else {
-                CreditsHelper::addUserCredits($userId, $priceCredits);
+                CreditsHelper::addUserCredits($userId, $totalChargeCredits);
 
                 return ApiResponse::error(
                     'Failed to provision server: ' . ($serverResult['error'] ?? 'Unknown error'),
@@ -251,7 +252,7 @@ class PlansController
             if ($serverUuid) {
                 $this->cleanupProvisionedServer($serverUuid);
             }
-            CreditsHelper::addUserCredits($userId, $priceCredits);
+            CreditsHelper::addUserCredits($userId, $totalChargeCredits);
 
             return ApiResponse::error('Failed to create subscription. Payment has been refunded.', 'CREATE_SUBSCRIPTION_FAILED', 500);
         }
@@ -263,14 +264,14 @@ class PlansController
             $planId,
             $plan['name'],
             $subscriptionId,
-            $priceCredits,
+            $chargeBreakdown,
             $periodDays
         );
 
         Activity::createActivity([
             'user_uuid' => $user['uuid'] ?? null,
             'name' => 'billingplans_subscribe',
-            'context' => "User subscribed to plan: {$plan['name']} (ID: {$planId}). Subscription #$subscriptionId. Paid: {$priceCredits} credits." .
+            'context' => "User subscribed to plan: {$plan['name']} (ID: {$planId}). Subscription #$subscriptionId. Paid: {$totalChargeCredits} credits." .
                 ($serverUuid ? " Server UUID: {$serverUuid}." : '') .
                 " Next renewal: {$nextRenewal}",
             'ip_address' => CloudFlareRealIP::getRealIP(),
@@ -278,7 +279,10 @@ class PlansController
 
         return ApiResponse::success([
             'subscription' => $subscription,
-            'credits_deducted' => $priceCredits,
+            'credits_deducted' => $totalChargeCredits,
+            'base_credits' => (int) $chargeBreakdown['base_credits'],
+            'tax_credits' => (int) $chargeBreakdown['tax_credits'],
+            'extra_charge_credits' => (int) $chargeBreakdown['extra_charge_credits'],
             'new_credits_balance' => CreditsHelper::getUserCredits($userId),
             'next_renewal_at' => $nextRenewal,
             'server_uuid' => $serverUuid,
@@ -565,7 +569,15 @@ class PlansController
     private function hydratePlan(array $plan, int $userCredits, array &$categoryCache, array &$preloaded): array
     {
         $plan['billing_period_label'] = Plan::getBillingPeriodLabel((int) ($plan['billing_period_days'] ?? 30));
-        $plan['can_afford'] = $userCredits >= (int) ($plan['price_credits'] ?? 0);
+        $breakdown = Plan::calculateChargeBreakdown($plan);
+        $plan['base_credits'] = (int) $breakdown['base_credits'];
+        $plan['tax_rate_percent'] = (float) $breakdown['tax_rate_percent'];
+        $plan['tax_credits'] = (int) $breakdown['tax_credits'];
+        $plan['extra_charge_percent'] = (float) $breakdown['extra_charge_percent'];
+        $plan['extra_charge_name'] = $breakdown['extra_charge_name'];
+        $plan['extra_charge_credits'] = (int) $breakdown['extra_charge_credits'];
+        $plan['total_credits'] = (int) $breakdown['total_credits'];
+        $plan['can_afford'] = $userCredits >= (int) $breakdown['total_credits'];
         $plan['has_server_template'] =
             (!empty($plan['realms_id']) || !empty($plan['user_can_choose_realm']))
             && (!empty($plan['spell_id']) || !empty($plan['user_can_choose_spell']));
@@ -588,6 +600,7 @@ class PlansController
 
         $plan['allowed_realms_options'] = $this->resolveRealmOptions($plan, $allowedRealmIds, $preloaded);
         $plan['allowed_spells_options'] = $this->resolveSpellOptions($plan, $allowedSpellIds, $plan['allowed_realms_options'], $preloaded);
+        $plan['location_ids'] = $this->resolvePlanLocationIds($plan);
 
         $categoryId = (int) ($plan['category_id'] ?? 0);
         if ($categoryId > 0) {
@@ -606,6 +619,34 @@ class PlansController
         }
 
         return $plan;
+    }
+
+    /**
+     * Resolve unique location IDs for the plan's configured nodes.
+     *
+     * @param array<string,mixed> $plan
+     * @return int[]
+     */
+    private function resolvePlanLocationIds(array $plan): array
+    {
+        $nodeIds = Plan::getNodeIds($plan);
+        if (empty($nodeIds)) {
+            return [];
+        }
+
+        $locationIds = [];
+        foreach ($nodeIds as $nodeId) {
+            if ($nodeId <= 0) {
+                continue;
+            }
+            $node = Node::getNodeById($nodeId);
+            if (!$node || empty($node['location_id'])) {
+                continue;
+            }
+            $locationIds[(int) $node['location_id']] = true;
+        }
+
+        return array_values(array_map('intval', array_keys($locationIds)));
     }
 
     /**

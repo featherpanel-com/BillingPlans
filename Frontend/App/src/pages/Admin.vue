@@ -100,7 +100,8 @@ const PRESET_PERIODS = [
 const emptyForm = (): PlanFormData => ({
   category_id: null,
   name: "", description: null, long_description: null,
-  price_credits: 0, billing_period_days: 30, is_active: true, max_subscriptions: null,
+  price_credits: 0, tax_rate_percent: 0, extra_charge_percent: 0, extra_charge_name: null,
+  billing_period_days: 30, is_active: true, max_subscriptions: null,
   node_ids: [], realms_id: null, spell_id: null,
   memory: 512, cpu: 100, disk: 1024, swap: 0, io: 500,
   backup_limit: 0, database_limit: 0, allocation_limit: null,
@@ -260,6 +261,9 @@ const openEdit = (plan: Plan) => {
     category_id: plan.category_id ?? null,
     name: plan.name, description: plan.description, long_description: plan.long_description,
     price_credits: plan.price_credits, billing_period_days: plan.billing_period_days,
+    tax_rate_percent: Number(plan.tax_rate_percent ?? 0),
+    extra_charge_percent: Number(plan.extra_charge_percent ?? 0),
+    extra_charge_name: plan.extra_charge_name ?? null,
     is_active: !!plan.is_active, max_subscriptions: plan.max_subscriptions,
     node_ids: Array.isArray(plan.node_ids)
       ? [...plan.node_ids]
@@ -427,6 +431,24 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
                 </select>
                 <ChevronDown class="billing-select-icon" />
               </div>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium mb-1.5">Tax (%)</label>
+              <input v-model.number="planForm.tax_rate_percent" type="number" min="0" step="0.01"
+                class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium mb-1.5">Custom Charge (%)</label>
+              <input v-model.number="planForm.extra_charge_percent" type="number" min="0" step="0.01"
+                class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+            </div>
+
+            <div class="md:col-span-2">
+              <label class="block text-sm font-medium mb-1.5">Custom Charge Name</label>
+              <input v-model="planForm.extra_charge_name" placeholder="e.g. Service fee"
+                class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
             </div>
 
             <div>
@@ -828,6 +850,9 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
                 <td class="px-4 py-3">
                   <span class="font-semibold">{{ plan.price_credits.toLocaleString() }}</span>
                   <span class="text-muted-foreground text-xs ml-1">cr</span>
+                  <div v-if="(plan.tax_rate_percent ?? 0) > 0 || (plan.extra_charge_percent ?? 0) > 0" class="text-[11px] text-muted-foreground mt-0.5">
+                    Total: {{ (plan.total_credits ?? plan.price_credits).toLocaleString() }} cr
+                  </div>
                 </td>
                 <td class="px-4 py-3 text-muted-foreground text-xs">{{ getPeriodLabel(plan.billing_period_days) }}</td>
                 <td class="px-4 py-3 hidden md:table-cell">

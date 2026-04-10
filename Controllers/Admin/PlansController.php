@@ -62,6 +62,14 @@ class PlansController
             $plan['allowed_spells'] = Plan::decodeIds($plan['allowed_spells'] ?? null);
             $plan['user_can_choose_realm'] = (bool) ($plan['user_can_choose_realm'] ?? false);
             $plan['user_can_choose_spell'] = (bool) ($plan['user_can_choose_spell'] ?? false);
+            $plan['tax_rate_percent'] = round((float) ($plan['tax_rate_percent'] ?? 0), 2);
+            $plan['extra_charge_percent'] = round((float) ($plan['extra_charge_percent'] ?? 0), 2);
+            $plan['extra_charge_name'] = isset($plan['extra_charge_name']) ? trim((string) $plan['extra_charge_name']) : null;
+            $breakdown = Plan::calculateChargeBreakdown($plan);
+            $plan['base_credits'] = (int) $breakdown['base_credits'];
+            $plan['tax_credits'] = (int) $breakdown['tax_credits'];
+            $plan['extra_charge_credits'] = (int) $breakdown['extra_charge_credits'];
+            $plan['total_credits'] = (int) $breakdown['total_credits'];
             $plan['category'] = self::resolveCategory((int) ($plan['category_id'] ?? 0), $categoryCache);
         }
 
@@ -104,6 +112,14 @@ class PlansController
         $plan['allowed_spells'] = Plan::decodeIds($plan['allowed_spells'] ?? null);
         $plan['user_can_choose_realm'] = (bool) ($plan['user_can_choose_realm'] ?? false);
         $plan['user_can_choose_spell'] = (bool) ($plan['user_can_choose_spell'] ?? false);
+        $plan['tax_rate_percent'] = round((float) ($plan['tax_rate_percent'] ?? 0), 2);
+        $plan['extra_charge_percent'] = round((float) ($plan['extra_charge_percent'] ?? 0), 2);
+        $plan['extra_charge_name'] = isset($plan['extra_charge_name']) ? trim((string) $plan['extra_charge_name']) : null;
+        $breakdown = Plan::calculateChargeBreakdown($plan);
+        $plan['base_credits'] = (int) $breakdown['base_credits'];
+        $plan['tax_credits'] = (int) $breakdown['tax_credits'];
+        $plan['extra_charge_credits'] = (int) $breakdown['extra_charge_credits'];
+        $plan['total_credits'] = (int) $breakdown['total_credits'];
         $noCache = [];
         $plan['category'] = self::resolveCategory((int) ($plan['category_id'] ?? 0), $noCache);
 
@@ -170,6 +186,9 @@ class PlansController
             'long_description' => isset($data['long_description']) ? trim($data['long_description']) : null,
             'price_credits' => $priceCredits,
             'billing_period_days' => $billingPeriodDays,
+            'tax_rate_percent' => isset($data['tax_rate_percent']) ? (float) $data['tax_rate_percent'] : 0,
+            'extra_charge_percent' => isset($data['extra_charge_percent']) ? (float) $data['extra_charge_percent'] : 0,
+            'extra_charge_name' => isset($data['extra_charge_name']) ? trim((string) $data['extra_charge_name']) : null,
             'is_active' => isset($data['is_active']) ? (int) filter_var($data['is_active'], FILTER_VALIDATE_BOOLEAN) : 1,
             'max_subscriptions' => (isset($data['max_subscriptions']) && $data['max_subscriptions'] !== null && $data['max_subscriptions'] !== '') ? max(1, (int) $data['max_subscriptions']) : null,
             'server_config' => $data['server_config'] ?? null,
@@ -264,6 +283,15 @@ class PlansController
         }
         if (isset($data['billing_period_days'])) {
             $updateData['billing_period_days'] = max(1, (int) $data['billing_period_days']);
+        }
+        if (array_key_exists('tax_rate_percent', $data)) {
+            $updateData['tax_rate_percent'] = (float) $data['tax_rate_percent'];
+        }
+        if (array_key_exists('extra_charge_percent', $data)) {
+            $updateData['extra_charge_percent'] = (float) $data['extra_charge_percent'];
+        }
+        if (array_key_exists('extra_charge_name', $data)) {
+            $updateData['extra_charge_name'] = $data['extra_charge_name'] !== null ? trim((string) $data['extra_charge_name']) : null;
         }
         if (isset($data['is_active'])) {
             $updateData['is_active'] = (int) filter_var($data['is_active'], FILTER_VALIDATE_BOOLEAN);

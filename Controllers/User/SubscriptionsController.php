@@ -47,6 +47,11 @@ class SubscriptionsController
 
         foreach ($subscriptions as &$sub) {
             $sub['billing_period_label'] = Plan::getBillingPeriodLabel((int) ($sub['billing_period_days'] ?? 30));
+            $breakdown = Plan::calculateChargeBreakdown($sub);
+            $sub['base_credits'] = (int) $breakdown['base_credits'];
+            $sub['tax_credits'] = (int) $breakdown['tax_credits'];
+            $sub['extra_charge_credits'] = (int) $breakdown['extra_charge_credits'];
+            $sub['total_credits'] = (int) $breakdown['total_credits'];
         }
 
         return ApiResponse::success([
@@ -75,6 +80,11 @@ class SubscriptionsController
         }
 
         $subscription['billing_period_label'] = Plan::getBillingPeriodLabel((int) ($subscription['billing_period_days'] ?? 30));
+        $breakdown = Plan::calculateChargeBreakdown($subscription);
+        $subscription['base_credits'] = (int) $breakdown['base_credits'];
+        $subscription['tax_credits'] = (int) $breakdown['tax_credits'];
+        $subscription['extra_charge_credits'] = (int) $breakdown['extra_charge_credits'];
+        $subscription['total_credits'] = (int) $breakdown['total_credits'];
 
         return ApiResponse::success($subscription, 'Subscription retrieved successfully', 200);
     }

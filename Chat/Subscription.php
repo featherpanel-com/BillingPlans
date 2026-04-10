@@ -27,7 +27,7 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days
+            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name
              FROM ' . self::$table . ' s
              LEFT JOIN featherpanel_billingplans_plans p ON s.plan_id = p.id
              WHERE s.id = :id LIMIT 1'
@@ -104,7 +104,7 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.description as plan_description
+            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.description as plan_description
              FROM ' . self::$table . ' s
              LEFT JOIN featherpanel_billingplans_plans p ON s.plan_id = p.id
              WHERE s.user_id = :user_id
@@ -119,7 +119,7 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.description as plan_description
+            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.description as plan_description
              FROM ' . self::$table . ' s
              LEFT JOIN featherpanel_billingplans_plans p ON s.plan_id = p.id
              WHERE s.user_id = :user_id AND s.status IN (\'active\', \'suspended\')
@@ -137,7 +137,7 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days
+            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name
              FROM ' . self::$table . ' s
              LEFT JOIN featherpanel_billingplans_plans p ON s.plan_id = p.id
              WHERE s.status = \'active\'
@@ -181,7 +181,7 @@ class Subscription
         $countStmt->execute($params);
         $total = (int) $countStmt->fetch(\PDO::FETCH_ASSOC)['count'];
 
-        $sql = 'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days,
+        $sql = 'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name,
                        u.username, u.email, u.uuid as user_uuid
                 FROM ' . self::$table . ' s
                 LEFT JOIN featherpanel_billingplans_plans p ON s.plan_id = p.id
@@ -251,7 +251,7 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days
+            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name
              FROM ' . self::$table . ' s
              LEFT JOIN featherpanel_billingplans_plans p ON s.plan_id = p.id
              WHERE s.status = :status

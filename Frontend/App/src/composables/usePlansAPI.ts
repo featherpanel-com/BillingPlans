@@ -10,6 +10,13 @@ export interface Plan {
   description: string | null;
   long_description: string | null;
   price_credits: number;
+  base_credits?: number;
+  tax_rate_percent?: number;
+  tax_credits?: number;
+  extra_charge_percent?: number;
+  extra_charge_name?: string | null;
+  extra_charge_credits?: number;
+  total_credits?: number;
   billing_period_days: number;
   billing_period_label: string;
   is_active: number;
@@ -21,6 +28,7 @@ export interface Plan {
 
   node_ids?: number[]; // multi-node support
   node_id?: number | null; // legacy
+  location_ids?: number[];
   realms_id: number | null;
   spell_id: number | null;
   memory: number;
@@ -53,6 +61,9 @@ export interface PlanFormData {
   description: string | null;
   long_description: string | null;
   price_credits: number;
+  tax_rate_percent: number;
+  extra_charge_percent: number;
+  extra_charge_name: string | null;
   billing_period_days: number;
   is_active: boolean;
   max_subscriptions: number | null;
@@ -238,6 +249,9 @@ export function useUserPlansAPI() {
   ): Promise<{
     subscription: Record<string, unknown>;
     credits_deducted: number;
+    base_credits?: number;
+    tax_credits?: number;
+    extra_charge_credits?: number;
     new_credits_balance: number;
     next_renewal_at: string;
     server_uuid: string | null;

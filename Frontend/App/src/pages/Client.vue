@@ -24,6 +24,8 @@ const plans = ref<Plan[]>([]);
 const subscriptions = ref<Subscription[]>([]);
 const categories = ref<Category[]>([]);
 const activeCategoryId = ref<number | null>(null);
+const activeLocationId = ref<number | null>(null);
+const searchQuery = ref("");
 const userCredits = ref(0);
 
 
@@ -74,9 +76,84 @@ const loadData = async () => {
 };
 
 const filteredPlans = computed(() => {
-  if (activeCategoryId.value === null) return plans.value;
-  return plans.value.filter((p) => p.category_id === activeCategoryId.value);
+  const query = searchQuery.value.trim().toLowerCase();
+  return plans.value.filter((p) => {
+    if (activeCategoryId.value !== null && p.category_id !== activeCategoryId.value) return false;
+    if (activeLocationId.value !== null) {
+      const locations = Array.isArray(p.location_ids) ? p.location_ids : [];
+      if (!locations.includes(activeLocationId.value)) return false;
+    }
+    if (!query) return true;
+    const haystack = `${p.name} ${p.description ?? ""} ${p.long_description ?? ""}`.toLowerCase();
+    return haystack.includes(query);
+  });
 });
+
+const availableLocationIds = computed<number[]>(() => {
+  const ids = new Set<number>();
+  for (const plan of plans.value) {
+    const locations = Array.isArray(plan.location_ids) ? plan.location_ids : [];
+    for (const locationId of locations) ids.add(locationId);
+  }
+  return Array.from(ids).sort((a, b) => a - b);
+});
+
+function locationLabel(locationId: number): string {
+  return `Location #${locationId}`;
+}
+
+function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function buildPlanUrl(plan: Plan): string {
+  const url = new URL(window.location.href);
+  const categorySlug = slugify(plan.category?.name ?? "plan");
+  url.hash = `/get/${categorySlug}/${plan.id}`;
+  return url.toString();
+}
+
+async function copyPlanUrl(plan: Plan) {
+  const link = buildPlanUrl(plan);
+  try {
+    await navigator.clipboard.writeText(link);
+    toast.success("Plan link copied.");
+  } catch {
+    toast.error("Failed to copy plan link.");
+  }
+}
+
+function openPlanFromUrl() {
+  const hash = window.location.hash || "";
+  const hashMatch = hash.match(/#\/get\/[^/]+\/(\d+)/);
+  if (hashMatch?.[1]) {
+    const hashPlanId = Number(hashMatch[1]);
+    if (Number.isFinite(hashPlanId) && hashPlanId > 0) {
+      const hashPlan = plans.value.find((p) => p.id === hashPlanId);
+      if (hashPlan) {
+        activeCategoryId.value = hashPlan.category_id ?? null;
+        startSubscribe(hashPlan);
+        return;
+      }
+    }
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const rawPlanId = params.get("plan");
+  if (!rawPlanId) return;
+  const planId = Number(rawPlanId);
+  if (!Number.isFinite(planId) || planId <= 0) return;
+  const plan = plans.value.find((p) => p.id === planId);
+  if (!plan) return;
+  if (params.get("category")) {
+    activeCategoryId.value = plan.category_id ?? null;
+  }
+  startSubscribe(plan);
+}
 
 const subscribeFilteredSpells = computed(() => {
   const plan = planToSubscribe.value;
@@ -132,7 +209,7 @@ const startSubscribe = (plan: Plan) => {
     return;
   }
   if (!plan.can_afford) {
-    toast.error(`You need ${(plan.price_credits - userCredits.value).toLocaleString()} more credits.`);
+    toast.error(`You need ${((plan.total_credits ?? plan.price_credits) - userCredits.value).toLocaleString()} more credits.`);
     return;
   }
   planToSubscribe.value = plan;
@@ -194,10 +271,13 @@ const pastSubscriptions = computed(() =>
   subscriptions.value.filter((s) => s.status === "cancelled" || s.status === "expired")
 );
 const balanceAfter = computed(() =>
-  planToSubscribe.value ? userCredits.value - planToSubscribe.value.price_credits : 0
+  planToSubscribe.value ? userCredits.value - (planToSubscribe.value.total_credits ?? planToSubscribe.value.price_credits) : 0
 );
 
-onMounted(loadData);
+onMounted(async () => {
+  await loadData();
+  openPlanFromUrl();
+});
 </script>
 
 <template>
@@ -334,8 +414,13 @@ onMounted(loadData);
             <div class="flex justify-between items-center px-5 py-3 gap-4 text-sm">
               <span class="text-muted-foreground">Due now</span>
               <span class="text-base font-bold text-foreground tabular-nums">
-                {{ planToSubscribe.price_credits.toLocaleString() }} <span class="text-sm font-normal text-muted-foreground">credits</span>
+                {{ (planToSubscribe.total_credits ?? planToSubscribe.price_credits).toLocaleString() }} <span class="text-sm font-normal text-muted-foreground">credits</span>
               </span>
+            </div>
+            <div v-if="(planToSubscribe.tax_credits ?? 0) > 0 || (planToSubscribe.extra_charge_credits ?? 0) > 0" class="px-5 py-3 text-xs text-muted-foreground">
+              Base {{ (planToSubscribe.base_credits ?? planToSubscribe.price_credits).toLocaleString() }} cr
+              <span v-if="(planToSubscribe.tax_credits ?? 0) > 0"> + Tax {{ (planToSubscribe.tax_credits ?? 0).toLocaleString() }} cr</span>
+              <span v-if="(planToSubscribe.extra_charge_credits ?? 0) > 0"> + {{ planToSubscribe.extra_charge_name || 'Additional charge' }} {{ (planToSubscribe.extra_charge_credits ?? 0).toLocaleString() }} cr</span>
             </div>
             <div class="flex justify-between items-center px-5 py-3 gap-4 text-sm bg-muted/20">
               <span class="text-muted-foreground">Balance after</span>
@@ -451,6 +536,23 @@ onMounted(loadData);
 
       
       <div v-if="activeTab === 'browse'">
+        <div class="flex items-center gap-3 mb-4 flex-wrap">
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="Search plans..."
+            class="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring w-full md:w-64"
+          />
+          <div v-if="availableLocationIds.length > 0" class="billing-select-wrap w-full md:w-52">
+            <select v-model="activeLocationId" class="billing-select">
+              <option :value="null">All locations</option>
+              <option v-for="locationId in availableLocationIds" :key="locationId" :value="locationId">
+                {{ locationLabel(locationId) }}
+              </option>
+            </select>
+            <ChevronDown class="billing-select-icon" />
+          </div>
+        </div>
         
         <div v-if="categories.length > 0" class="flex gap-2 mb-5 flex-wrap">
           <button
@@ -517,9 +619,12 @@ onMounted(loadData);
               
               <div class="bg-muted/40 rounded-lg p-4 mb-4 text-center">
                 <div class="flex items-baseline justify-center gap-1.5">
-                  <span class="text-3xl font-bold text-foreground">{{ plan.price_credits.toLocaleString() }}</span>
+                  <span class="text-3xl font-bold text-foreground">{{ (plan.total_credits ?? plan.price_credits).toLocaleString() }}</span>
                   <span class="text-muted-foreground text-sm">credits</span>
                 </div>
+                <p v-if="(plan.tax_credits ?? 0) > 0 || (plan.extra_charge_credits ?? 0) > 0" class="text-[11px] text-muted-foreground mt-1">
+                  Base {{ (plan.base_credits ?? plan.price_credits).toLocaleString() }} cr + extras
+                </p>
                 <div class="flex items-center justify-center gap-1.5 mt-1 text-muted-foreground text-xs">
                   <CalendarClock class="h-3.5 w-3.5" />
                   <span>Billed {{ getPeriodLabel(plan.billing_period_days) }}</span>
@@ -606,25 +711,35 @@ onMounted(loadData);
               <div v-if="!plan.can_afford && !plan.is_sold_out"
                 class="flex items-center gap-2 text-xs text-amber-500 bg-amber-500/10 rounded-lg px-3 py-2 mb-3">
                 <AlertTriangle class="h-3.5 w-3.5 shrink-0" />
-                <span>Need {{ (plan.price_credits - userCredits).toLocaleString() }} more credits</span>
+                <span>Need {{ ((plan.total_credits ?? plan.price_credits) - userCredits).toLocaleString() }} more credits</span>
               </div>
             </div>
 
             
             <div class="px-5 pb-5">
-              <button
-                @click="startSubscribe(plan)"
-                :disabled="!plan.can_afford || !!plan.is_sold_out"
-                :class="[
-                  'w-full inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors',
-                  plan.can_afford && !plan.is_sold_out
-                    ? 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm'
-                    : 'bg-muted text-muted-foreground cursor-not-allowed',
-                ]"
-              >
-                <ShoppingCart class="h-4 w-4" />
-                {{ plan.is_sold_out ? 'Sold Out' : !plan.can_afford ? 'Insufficient Credits' : 'Subscribe Now' }}
-              </button>
+              <div class="flex items-center gap-2">
+                <button
+                  @click="startSubscribe(plan)"
+                  :disabled="!plan.can_afford || !!plan.is_sold_out"
+                  :class="[
+                    'flex-1 inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors',
+                    plan.can_afford && !plan.is_sold_out
+                      ? 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm'
+                      : 'bg-muted text-muted-foreground cursor-not-allowed',
+                  ]"
+                >
+                  <ShoppingCart class="h-4 w-4" />
+                  {{ plan.is_sold_out ? 'Sold Out' : !plan.can_afford ? 'Insufficient Credits' : 'Subscribe Now' }}
+                </button>
+                <button
+                  type="button"
+                  @click="copyPlanUrl(plan)"
+                  class="inline-flex items-center justify-center rounded-lg border border-border bg-card px-3 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                  title="Copy plan link"
+                >
+                  Copy Link
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -29,6 +29,7 @@ use App\Services\Wings\Wings;
 use App\Config\ConfigInterface;
 use App\Cli\Utils\MinecraftColorCodeSupport;
 use App\Addons\billingplans\Chat\Subscription;
+use App\Addons\billingplans\Chat\Plan;
 use App\Addons\billingcore\Helpers\CreditsHelper;
 use App\Addons\billingplans\Helpers\InvoiceHelper;
 use App\Addons\billingplans\Helpers\SettingsHelper;
@@ -140,7 +141,8 @@ class BillingPlansRenewal implements TimeTask
         $subId = (int) $subscription['id'];
         $userId = (int) $subscription['user_id'];
         $planName = $subscription['plan_name'] ?? 'Unknown Plan';
-        $priceCredits = (int) ($subscription['price_credits'] ?? 0);
+        $chargeBreakdown = Plan::calculateChargeBreakdown($subscription);
+        $priceCredits = (int) $chargeBreakdown['total_credits'];
         $periodDays = (int) ($subscription['billing_period_days'] ?? 30);
         $serverUuid = $subscription['server_uuid'] ?? null;
         $wasSuspended = $subscription['status'] === 'suspended';
@@ -219,7 +221,7 @@ class BillingPlansRenewal implements TimeTask
             $this->unsuspendServer($serverUuid, $subId, $app);
         }
 
-        InvoiceHelper::createRenewalInvoice($userId, $subId, $planName, $priceCredits, $periodDays, $nextRenewal);
+        InvoiceHelper::createRenewalInvoice($userId, $subId, $planName, $chargeBreakdown, $periodDays, $nextRenewal);
 
         $newBalance = $currentBalance - $priceCredits;
         MinecraftColorCodeSupport::sendOutputWithNewLine(
