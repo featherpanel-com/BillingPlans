@@ -18,6 +18,7 @@
 namespace App\Addons\billingplans\Controllers\Admin;
 
 use App\Chat\Node;
+use App\Chat\Image;
 use App\Chat\Realm;
 use App\Chat\Spell;
 use App\Chat\Activity;
@@ -60,6 +61,8 @@ class PlansController
             }
             $plan['allowed_realms'] = Plan::decodeIds($plan['allowed_realms'] ?? null);
             $plan['allowed_spells'] = Plan::decodeIds($plan['allowed_spells'] ?? null);
+            $plan['allowed_upgrade_plan_ids'] = Plan::decodeIds($plan['allowed_upgrade_plan_ids'] ?? null);
+            $plan['allowed_downgrade_plan_ids'] = Plan::decodeIds($plan['allowed_downgrade_plan_ids'] ?? null);
             $plan['user_can_choose_realm'] = (bool) ($plan['user_can_choose_realm'] ?? false);
             $plan['user_can_choose_spell'] = (bool) ($plan['user_can_choose_spell'] ?? false);
             $plan['tax_rate_percent'] = round((float) ($plan['tax_rate_percent'] ?? 0), 2);
@@ -110,6 +113,8 @@ class PlansController
         }
         $plan['allowed_realms'] = Plan::decodeIds($plan['allowed_realms'] ?? null);
         $plan['allowed_spells'] = Plan::decodeIds($plan['allowed_spells'] ?? null);
+        $plan['allowed_upgrade_plan_ids'] = Plan::decodeIds($plan['allowed_upgrade_plan_ids'] ?? null);
+        $plan['allowed_downgrade_plan_ids'] = Plan::decodeIds($plan['allowed_downgrade_plan_ids'] ?? null);
         $plan['user_can_choose_realm'] = (bool) ($plan['user_can_choose_realm'] ?? false);
         $plan['user_can_choose_spell'] = (bool) ($plan['user_can_choose_spell'] ?? false);
         $plan['tax_rate_percent'] = round((float) ($plan['tax_rate_percent'] ?? 0), 2);
@@ -200,6 +205,8 @@ class PlansController
             'spell_id' => isset($data['spell_id']) && $data['spell_id'] ? (int) $data['spell_id'] : null,
             'user_can_choose_spell' => !empty($data['user_can_choose_spell']),
             'allowed_spells' => $data['allowed_spells'] ?? null,
+            'allowed_upgrade_plan_ids' => $data['allowed_upgrade_plan_ids'] ?? null,
+            'allowed_downgrade_plan_ids' => $data['allowed_downgrade_plan_ids'] ?? null,
             'memory' => (int) ($data['memory'] ?? 512),
             'cpu' => (int) ($data['cpu'] ?? 100),
             'disk' => (int) ($data['disk'] ?? 1024),
@@ -210,6 +217,7 @@ class PlansController
             'allocation_limit' => isset($data['allocation_limit']) && $data['allocation_limit'] !== null && $data['allocation_limit'] !== '' ? (int) $data['allocation_limit'] : null,
             'startup_override' => isset($data['startup_override']) && $data['startup_override'] !== '' ? trim($data['startup_override']) : null,
             'image_override' => isset($data['image_override']) && $data['image_override'] !== '' ? trim($data['image_override']) : null,
+            'card_background_image' => isset($data['card_background_image']) && $data['card_background_image'] !== '' ? trim($data['card_background_image']) : null,
         ]);
 
         if ($planId === null) {
@@ -329,6 +337,12 @@ class PlansController
         if (array_key_exists('allowed_spells', $data)) {
             $updateData['allowed_spells'] = $data['allowed_spells'];
         }
+        if (array_key_exists('allowed_upgrade_plan_ids', $data)) {
+            $updateData['allowed_upgrade_plan_ids'] = $data['allowed_upgrade_plan_ids'];
+        }
+        if (array_key_exists('allowed_downgrade_plan_ids', $data)) {
+            $updateData['allowed_downgrade_plan_ids'] = $data['allowed_downgrade_plan_ids'];
+        }
         foreach (['memory', 'cpu', 'disk', 'swap', 'io', 'backup_limit', 'database_limit'] as $intField) {
             if (isset($data[$intField])) {
                 $updateData[$intField] = max(0, (int) $data[$intField]);
@@ -342,6 +356,9 @@ class PlansController
         }
         if (array_key_exists('image_override', $data)) {
             $updateData['image_override'] = ($data['image_override'] !== null && $data['image_override'] !== '') ? trim($data['image_override']) : null;
+        }
+        if (array_key_exists('card_background_image', $data)) {
+            $updateData['card_background_image'] = ($data['card_background_image'] !== null && $data['card_background_image'] !== '') ? trim($data['card_background_image']) : null;
         }
 
         if (!Plan::update($planId, $updateData)) {
@@ -405,6 +422,7 @@ class PlansController
     public function getOptions(Request $request): Response
     {
         $nodes = array_map(fn ($n) => ['id' => $n['id'], 'name' => $n['name'], 'location_id' => $n['location_id'] ?? null], Node::getAllNodes() ?: []);
+        $plans = array_map(fn ($p) => ['id' => (int) $p['id'], 'name' => (string) $p['name']], Plan::getAll(false));
         $allRealms = Realm::getAll(null, 500, 0) ?: [];
         $realms = array_map(fn ($r) => ['id' => $r['id'], 'name' => $r['name']], $allRealms);
         $allSpells = Spell::getAllSpells() ?: [];
@@ -428,10 +446,106 @@ class PlansController
 
         return ApiResponse::success([
             'nodes' => array_values($nodes),
+            'plans' => array_values($plans),
             'realms' => array_values($realms),
             'spells' => array_values($spells),
             'categories' => array_values($categories),
         ], 'Options retrieved successfully', 200);
+    }
+
+    public function listImages(Request $request): Response
+    {
+        $page = max(1, (int) $request->query->get('page', 1));
+        $limit = min(100, max(1, (int) $request->query->get('limit', 100)));
+        $search = (string) $request->query->get('search', '');
+
+        $images = Image::searchImages(
+            page: $page,
+            limit: $limit,
+            search: $search,
+            fields: ['id', 'name', 'url', 'created_at', 'updated_at'],
+            sortBy: 'created_at',
+            sortOrder: 'DESC'
+        );
+
+        $total = Image::getCount($search);
+        $totalPages = (int) ceil($total / max(1, $limit));
+
+        return ApiResponse::success([
+            'images' => $images,
+            'pagination' => [
+                'current_page' => $page,
+                'per_page' => $limit,
+                'total_records' => $total,
+                'total_pages' => $totalPages,
+            ],
+        ], 'Images retrieved successfully', 200);
+    }
+
+    public function uploadImage(Request $request): Response
+    {
+        if (!$request->files->has('image')) {
+            return ApiResponse::error('No image file provided', 'NO_FILE_PROVIDED', 400);
+        }
+
+        $file = $request->files->get('image');
+        $name = trim((string) $request->request->get('name', ''));
+        if ($name === '') {
+            return ApiResponse::error('Image name is required', 'MISSING_NAME', 400);
+        }
+        if (!$file->isValid()) {
+            return ApiResponse::error('Invalid file upload', 'INVALID_FILE', 400);
+        }
+        if ($file->getSize() > 10 * 1024 * 1024) {
+            return ApiResponse::error('File size too large. Maximum size is 10MB', 'FILE_TOO_LARGE', 400);
+        }
+
+        $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        if (!in_array((string) $file->getMimeType(), $allowedTypes, true)) {
+            return ApiResponse::error('Invalid file type. Allowed types: JPG, PNG, GIF, WebP', 'INVALID_FILE_TYPE', 400);
+        }
+
+        $existing = Image::getByName($name);
+        if ($existing) {
+            return ApiResponse::error('Image name already exists', 'IMAGE_NAME_EXISTS', 409);
+        }
+
+        $attachmentsDir = APP_PUBLIC . '/attachments/';
+        if (!is_dir($attachmentsDir)) {
+            mkdir($attachmentsDir, 0755, true);
+        }
+
+        $extension = $file->guessExtension();
+        $filename = uniqid() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '_', $name) . '.' . $extension;
+        $filePath = $attachmentsDir . $filename;
+
+        try {
+            $file->move($attachmentsDir, $filename);
+        } catch (\Throwable $e) {
+            return ApiResponse::error('Failed to save file', 'SAVE_FAILED', 500);
+        }
+
+        $url = '/attachments/' . $filename;
+        $imageId = Image::create([
+            'name' => $name,
+            'url' => $url,
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        if (!$imageId) {
+            if (file_exists($filePath)) {
+                unlink($filePath);
+            }
+
+            return ApiResponse::error('Failed to create image record', 'FAILED_TO_CREATE_IMAGE', 500);
+        }
+
+        return ApiResponse::success([
+            'image_id' => (int) $imageId,
+            'url' => $url,
+            'filename' => $filename,
+        ], 'Image uploaded successfully', 201);
     }
 
     /** @param array<int,array<string,mixed>> $cache */

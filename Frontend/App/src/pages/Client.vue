@@ -13,7 +13,7 @@ import { useUserCategoriesAPI, type Category, colorClasses } from "@/composables
 
 const toast = useToast();
 const { loading: plansLoading, listPlans, subscribeToPlan } = useUserPlansAPI();
-const { loading: subsLoading, listSubscriptions, cancelSubscription } = useUserSubscriptionsAPI();
+const { loading: subsLoading, listSubscriptions, cancelSubscription, changeSubscriptionPlan } = useUserSubscriptionsAPI();
 const { listCategories } = useUserCategoriesAPI();
 
 type Tab = "browse" | "my-subscriptions";
@@ -31,11 +31,16 @@ const userCredits = ref(0);
 
 const planToSubscribe = ref<Plan | null>(null);
 const serverName = ref("");
+const couponCode = ref("");
 const chosenRealmId = ref<number | null>(null);
 const chosenSpellId = ref<number | null>(null);
 const subscribing = ref(false);
 const showCancelConfirm = ref(false);
 const subToCancel = ref<Subscription | null>(null);
+const showChangePlanConfirm = ref(false);
+const subToChange = ref<Subscription | null>(null);
+const targetPlanId = ref<number | null>(null);
+const changingPlan = ref(false);
 const expandedPlanId = ref<number | null>(null);
 const PERIOD_MAP: Record<number, string> = {
   1: "Daily", 7: "Weekly", 14: "Bi-Weekly", 30: "Monthly",
@@ -98,9 +103,23 @@ const availableLocationIds = computed<number[]>(() => {
   return Array.from(ids).sort((a, b) => a - b);
 });
 
-function locationLabel(locationId: number): string {
-  return `Location #${locationId}`;
-}
+const locationOptions = computed<Array<{ id: number; label: string }>>(() => {
+  const labels = new Map<number, string>();
+  for (const plan of plans.value) {
+    const locationIds = Array.isArray(plan.location_ids) ? plan.location_ids : [];
+    const locationNames = plan.location_names ?? {};
+    for (const locationId of locationIds) {
+      const rawLabel = locationNames[String(locationId)];
+      const label = typeof rawLabel === "string" ? rawLabel.trim() : "";
+      if (label && !labels.has(locationId)) labels.set(locationId, label);
+    }
+  }
+
+  return availableLocationIds.value.map((id) => ({
+    id,
+    label: labels.get(id) ?? `Location #${id}`,
+  }));
+});
 
 function slugify(input: string): string {
   return input
@@ -110,11 +129,64 @@ function slugify(input: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+function normalizeAssetUrl(url: string): string {
+  const raw = url.trim();
+  if (!raw) return "";
+  try {
+    return new URL(raw, window.location.origin).toString();
+  } catch {
+    return raw;
+  }
+}
+
+function isImageIcon(icon: string | null | undefined): boolean {
+  if (!icon) return false;
+  const value = icon.trim().toLowerCase();
+  return (
+    value.startsWith("http://") ||
+    value.startsWith("https://") ||
+    value.startsWith("/") ||
+    value.startsWith("data:image/") ||
+    value.endsWith(".png") ||
+    value.endsWith(".jpg") ||
+    value.endsWith(".jpeg") ||
+    value.endsWith(".gif") ||
+    value.endsWith(".webp") ||
+    value.endsWith(".svg")
+  );
+}
+
 function buildPlanUrl(plan: Plan): string {
-  const url = new URL(window.location.href);
+  const topWindow = window.top ?? window;
+  const url = new URL("/dashboard/billing/plans", topWindow.location.origin);
   const categorySlug = slugify(plan.category?.name ?? "plan");
+  url.searchParams.set("plan", String(plan.id));
+  url.searchParams.set("category", categorySlug);
   url.hash = `/get/${categorySlug}/${plan.id}`;
   return url.toString();
+}
+
+function cardBackgroundStyle(plan: Plan): Record<string, string> {
+  const rawImage = typeof plan.card_background_image === "string" ? plan.card_background_image.trim() : "";
+  let image = rawImage;
+  if (image) {
+    try {
+      const parsed = new URL(image, window.location.origin);
+      if (parsed.protocol === "http:" && window.location.protocol === "https:") {
+        parsed.protocol = "https:";
+      }
+      image = parsed.toString();
+    } catch {
+      image = rawImage;
+    }
+  }
+  if (!image) return {};
+
+  return {
+    backgroundImage: `linear-gradient(to bottom, rgb(0 0 0 / 0.45), rgb(0 0 0 / 0.7)), url("${image}")`,
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+  };
 }
 
 async function copyPlanUrl(plan: Plan) {
@@ -128,7 +200,10 @@ async function copyPlanUrl(plan: Plan) {
 }
 
 function openPlanFromUrl() {
-  const hash = window.location.hash || "";
+  const topWindow = window.top ?? window;
+  const current = window.location;
+  const topLocation = topWindow.location;
+  const hash = topLocation.hash || current.hash || "";
   const hashMatch = hash.match(/#\/get\/[^/]+\/(\d+)/);
   if (hashMatch?.[1]) {
     const hashPlanId = Number(hashMatch[1]);
@@ -142,7 +217,7 @@ function openPlanFromUrl() {
     }
   }
 
-  const params = new URLSearchParams(window.location.search);
+  const params = new URLSearchParams(topLocation.search || current.search);
   const rawPlanId = params.get("plan");
   if (!rawPlanId) return;
   const planId = Number(rawPlanId);
@@ -199,6 +274,7 @@ const closeSubscribeFlow = () => {
   shellView.value = "main";
   planToSubscribe.value = null;
   serverName.value = "";
+  couponCode.value = "";
   chosenRealmId.value = null;
   chosenSpellId.value = null;
 };
@@ -214,6 +290,7 @@ const startSubscribe = (plan: Plan) => {
   }
   planToSubscribe.value = plan;
   serverName.value = plan.name;
+  couponCode.value = "";
   chosenRealmId.value = null;
   chosenSpellId.value = null;
   if (plan.user_can_choose_realm && plan.allowed_realms_options?.length === 1) {
@@ -234,9 +311,17 @@ const executeSubscribe = async () => {
       server_name: serverName.value.trim() || undefined,
       chosen_realm_id: realmId,
       chosen_spell_id: spellId,
+      coupon_code: couponCode.value.trim() || undefined,
     });
     userCredits.value = result.new_credits_balance;
-    toast.success(`Subscribed to ${planToSubscribe.value.name}!${result.server_uuid ? " Your server is being set up." : ""}`);
+    const paidNow = Number(result.credits_deducted ?? 0);
+    const beforeDiscount = Number(result.credits_before_discount ?? paidNow);
+    const discountNow = Math.max(0, beforeDiscount - paidNow);
+    toast.success(
+      `Subscribed to ${planToSubscribe.value.name}! Paid ${paidNow.toLocaleString()} credits` +
+        (discountNow > 0 ? ` (${discountNow.toLocaleString()} discount applied)` : "") +
+        (result.server_uuid ? ". Your server is being set up." : "")
+    );
     closeSubscribeFlow();
     await loadData();
     activeTab.value = "my-subscriptions";
@@ -257,6 +342,67 @@ const executeCancelSub = async () => {
     await loadData();
   } catch (e) {
     toast.error(e instanceof Error ? e.message : "Failed to cancel subscription");
+  }
+};
+
+const candidatePlansForSub = computed<Plan[]>(() => {
+  const sub = subToChange.value;
+  if (!sub) return [];
+  const allowedUp = Array.isArray(sub.allowed_upgrade_plan_ids) ? sub.allowed_upgrade_plan_ids : [];
+  const allowedDown = Array.isArray(sub.allowed_downgrade_plan_ids) ? sub.allowed_downgrade_plan_ids : [];
+  const hasExplicitRules = allowedUp.length > 0 || allowedDown.length > 0;
+
+  return plans.value.filter((p) => {
+    if (p.id === sub.plan_id || p.is_active !== 1) return false;
+    if (!hasExplicitRules) return true;
+    const delta = (p.total_credits ?? p.price_credits) - sub.price_credits;
+    if (delta > 0) return allowedUp.includes(p.id);
+    if (delta < 0) return allowedDown.includes(p.id);
+    return allowedUp.includes(p.id) || allowedDown.includes(p.id);
+  });
+});
+
+const selectedTargetPlan = computed<Plan | null>(() => {
+  if (targetPlanId.value == null) return null;
+  return candidatePlansForSub.value.find((p) => p.id === targetPlanId.value) ?? null;
+});
+
+const changeDelta = computed<number>(() => {
+  const sub = subToChange.value;
+  const target = selectedTargetPlan.value;
+  if (!sub || !target) return 0;
+  return (target.total_credits ?? target.price_credits) - sub.price_credits;
+});
+
+const confirmChangePlan = (sub: Subscription) => {
+  subToChange.value = sub;
+  const first = candidatePlansForSub.value[0];
+  targetPlanId.value = first ? first.id : null;
+  showChangePlanConfirm.value = true;
+};
+
+const executeChangePlan = async () => {
+  if (!subToChange.value || targetPlanId.value == null) return;
+  changingPlan.value = true;
+  try {
+    const result = await changeSubscriptionPlan(subToChange.value.id, targetPlanId.value);
+    userCredits.value = result.new_credits_balance;
+    const delta = result.credits_delta;
+    if (delta > 0) {
+      toast.success(`Plan upgraded. Charged ${delta.toLocaleString()} credits.`);
+    } else if (delta < 0) {
+      toast.success(`Plan downgraded. Refunded ${Math.abs(delta).toLocaleString()} credits.`);
+    } else {
+      toast.success("Plan changed successfully.");
+    }
+    showChangePlanConfirm.value = false;
+    subToChange.value = null;
+    targetPlanId.value = null;
+    await loadData();
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : "Failed to change plan");
+  } finally {
+    changingPlan.value = false;
   }
 };
 
@@ -417,6 +563,16 @@ onMounted(async () => {
                 {{ (planToSubscribe.total_credits ?? planToSubscribe.price_credits).toLocaleString() }} <span class="text-sm font-normal text-muted-foreground">credits</span>
               </span>
             </div>
+            <div class="px-5 py-3 text-xs text-muted-foreground">
+              <label class="block text-xs font-medium text-muted-foreground mb-1.5">Coupon code (optional)</label>
+              <input
+                v-model="couponCode"
+                type="text"
+                placeholder="Enter coupon code"
+                class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm uppercase placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+              <p class="mt-1">Supports first-purchase and renewal coupons if configured by admins.</p>
+            </div>
             <div v-if="(planToSubscribe.tax_credits ?? 0) > 0 || (planToSubscribe.extra_charge_credits ?? 0) > 0" class="px-5 py-3 text-xs text-muted-foreground">
               Base {{ (planToSubscribe.base_credits ?? planToSubscribe.price_credits).toLocaleString() }} cr
               <span v-if="(planToSubscribe.tax_credits ?? 0) > 0"> + Tax {{ (planToSubscribe.tax_credits ?? 0).toLocaleString() }} cr</span>
@@ -546,8 +702,8 @@ onMounted(async () => {
           <div v-if="availableLocationIds.length > 0" class="billing-select-wrap w-full md:w-52">
             <select v-model="activeLocationId" class="billing-select">
               <option :value="null">All locations</option>
-              <option v-for="locationId in availableLocationIds" :key="locationId" :value="locationId">
-                {{ locationLabel(locationId) }}
+              <option v-for="location in locationOptions" :key="location.id" :value="location.id">
+                {{ location.label }}
               </option>
             </select>
             <ChevronDown class="billing-select-icon" />
@@ -566,7 +722,8 @@ onMounted(async () => {
             @click="activeCategoryId = cat.id"
             :class="['inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium border transition-all',
               colorClasses(cat.color, activeCategoryId === cat.id)]">
-            <span v-if="cat.icon" class="text-base leading-none">{{ cat.icon }}</span>
+                  <img v-if="isImageIcon(cat.icon)" :src="normalizeAssetUrl(cat.icon || '')" :alt="cat.name" class="h-4 w-4 rounded object-cover" />
+                  <span v-else-if="cat.icon" class="text-base leading-none">{{ cat.icon }}</span>
             {{ cat.name }}
             <span class="opacity-60 text-xs">({{ cat.plan_count }})</span>
           </button>
@@ -586,6 +743,7 @@ onMounted(async () => {
           <div
             v-for="plan in filteredPlans" :key="plan.id"
             class="bg-card border border-border rounded-xl shadow-sm flex flex-col overflow-hidden transition-all hover:shadow-md"
+            :style="cardBackgroundStyle(plan)"
             :class="{
               'border-primary/50 shadow-primary/10': !plan.is_sold_out && plan.can_afford,
               'opacity-60': plan.is_sold_out,
@@ -596,7 +754,8 @@ onMounted(async () => {
               
               <div v-if="plan.category" class="mb-2">
                 <span :class="['inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium', colorClasses(plan.category.color)]">
-                  <span v-if="plan.category.icon">{{ plan.category.icon }}</span>
+                  <img v-if="isImageIcon(plan.category.icon)" :src="normalizeAssetUrl(plan.category.icon || '')" :alt="plan.category.name" class="h-3.5 w-3.5 rounded object-cover" />
+                  <span v-else-if="plan.category.icon">{{ plan.category.icon }}</span>
                   {{ plan.category.name }}
                 </span>
               </div>
@@ -830,6 +989,13 @@ onMounted(async () => {
                   >
                     <XCircle class="h-3.5 w-3.5" />Cancel Subscription
                   </button>
+                  <button
+                    v-if="sub.status === 'active' || sub.status === 'suspended'"
+                    @click="confirmChangePlan(sub)"
+                    class="w-full mt-2 inline-flex items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 transition-colors"
+                  >
+                    <RefreshCw class="h-3.5 w-3.5" />Change Plan
+                  </button>
                 </div>
               </div>
             </div>
@@ -897,6 +1063,47 @@ onMounted(async () => {
               <button @click="executeCancelSub" :disabled="subsLoading"
                 class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60 transition-colors">
                 <Loader2 v-if="subsLoading" class="h-4 w-4 animate-spin" />Yes, Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="showChangePlanConfirm && subToChange" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showChangePlanConfirm = false">
+        <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-lg">
+          <div class="px-6 py-4 border-b border-border"><h2 class="text-base font-semibold">Change Subscription Plan</h2></div>
+          <div class="p-6 space-y-4">
+            <p class="text-sm text-muted-foreground">
+              Current: <strong class="text-foreground">{{ subToChange.plan_name }}</strong>
+            </p>
+            <div class="billing-select-wrap">
+              <select v-model="targetPlanId" class="billing-select" :disabled="candidatePlansForSub.length === 0">
+                <option :value="null" disabled>Select new plan...</option>
+                <option v-for="plan in candidatePlansForSub" :key="plan.id" :value="plan.id">
+                  {{ plan.name }} — {{ (plan.total_credits ?? plan.price_credits).toLocaleString() }} credits / {{ getPeriodLabel(plan.billing_period_days) }}
+                </option>
+              </select>
+              <ChevronDown class="billing-select-icon" />
+            </div>
+            <p v-if="candidatePlansForSub.length === 0" class="text-xs text-muted-foreground">
+              No plan changes are allowed for this subscription right now. Ask an admin.
+            </p>
+            <p v-if="selectedTargetPlan" class="text-xs text-muted-foreground">
+              <span v-if="changeDelta > 0">You will pay <strong class="text-foreground">{{ changeDelta.toLocaleString() }} credits</strong> now.</span>
+              <span v-else-if="changeDelta < 0">You will receive <strong class="text-foreground">{{ Math.abs(changeDelta).toLocaleString() }} credits</strong> now.</span>
+              <span v-else>No immediate credit change.</span>
+            </p>
+            <div class="flex gap-3">
+              <button @click="showChangePlanConfirm = false" class="flex-1 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Cancel</button>
+              <button
+                @click="executeChangePlan"
+                :disabled="changingPlan || targetPlanId == null"
+                class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
+              >
+                <Loader2 v-if="changingPlan" class="h-4 w-4 animate-spin" />
+                Confirm Change
               </button>
             </div>
           </div>

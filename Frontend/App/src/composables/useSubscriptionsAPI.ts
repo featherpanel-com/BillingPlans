@@ -17,6 +17,12 @@ export interface Subscription {
   price_credits: number;
   billing_period_days: number;
   billing_period_label?: string;
+  base_credits?: number;
+  tax_credits?: number;
+  extra_charge_credits?: number;
+  total_credits?: number;
+  allowed_upgrade_plan_ids?: number[];
+  allowed_downgrade_plan_ids?: number[];
   plan_description?: string | null;
   
   username?: string;
@@ -26,6 +32,13 @@ export interface Subscription {
   server_name?: string | null;
     admin_credits_refunded_total?: number;
     admin_refunded_at?: string | null;
+}
+
+export interface ChangeSubscriptionPlanResult {
+  subscription: Subscription;
+  credits_delta: number;
+  new_credits_balance: number;
+  next_renewal_at: string;
 }
 
 export function useAdminSubscriptionsAPI() {
@@ -206,5 +219,26 @@ export function useUserSubscriptionsAPI() {
     }
   };
 
-  return { loading, listSubscriptions, cancelSubscription };
+  const changeSubscriptionPlan = async (
+    subscriptionId: number,
+    planId: number
+  ): Promise<ChangeSubscriptionPlanResult> => {
+    loading.value = true;
+    try {
+      const res = await axios.post(
+        `/api/user/billingplans/subscriptions/${subscriptionId}/change-plan`,
+        { plan_id: planId }
+      );
+      return res.data.data as ChangeSubscriptionPlanResult;
+    } catch (e) {
+      const err = e as AxiosError<{ message?: string }>;
+      throw new Error(
+        err.response?.data?.message || "Failed to change subscription plan"
+      );
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  return { loading, listSubscriptions, cancelSubscription, changeSubscriptionPlan };
 }

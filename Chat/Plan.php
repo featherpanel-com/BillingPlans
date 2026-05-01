@@ -90,14 +90,16 @@ class Plan
               node_ids, node_id, realms_id, user_can_choose_realm, allowed_realms,
               spell_id, user_can_choose_spell, allowed_spells,
               memory, cpu, disk, swap, io,
-              backup_limit, database_limit, allocation_limit, startup_override, image_override)
+              backup_limit, database_limit, allocation_limit, startup_override, image_override, card_background_image,
+              allowed_upgrade_plan_ids, allowed_downgrade_plan_ids)
              VALUES
              (:category_id, :name, :description, :long_description, :price_credits, :billing_period_days, :is_active, :max_subscriptions, :server_config,
               :tax_rate_percent, :extra_charge_percent, :extra_charge_name,
               :node_ids, :node_id, :realms_id, :user_can_choose_realm, :allowed_realms,
               :spell_id, :user_can_choose_spell, :allowed_spells,
               :memory, :cpu, :disk, :swap, :io,
-              :backup_limit, :database_limit, :allocation_limit, :startup_override, :image_override)'
+              :backup_limit, :database_limit, :allocation_limit, :startup_override, :image_override, :card_background_image,
+              :allowed_upgrade_plan_ids, :allowed_downgrade_plan_ids)'
         );
         $stmt->execute([
             'category_id' => isset($data['category_id']) && $data['category_id'] ? (int) $data['category_id'] : null,
@@ -131,6 +133,9 @@ class Plan
             'allocation_limit' => isset($data['allocation_limit']) && $data['allocation_limit'] !== null && $data['allocation_limit'] !== '' ? (int) $data['allocation_limit'] : null,
             'startup_override' => $data['startup_override'] ?? null,
             'image_override' => $data['image_override'] ?? null,
+            'card_background_image' => $data['card_background_image'] ?? null,
+            'allowed_upgrade_plan_ids' => self::encodeIds($data['allowed_upgrade_plan_ids'] ?? null),
+            'allowed_downgrade_plan_ids' => self::encodeIds($data['allowed_downgrade_plan_ids'] ?? null),
         ]);
 
         $insertId = (int) $pdo->lastInsertId();
@@ -148,7 +153,8 @@ class Plan
             'node_ids', 'node_id', 'realms_id', 'user_can_choose_realm', 'allowed_realms',
             'spell_id', 'user_can_choose_spell', 'allowed_spells',
             'memory', 'cpu', 'disk', 'swap', 'io',
-            'backup_limit', 'database_limit', 'allocation_limit', 'startup_override', 'image_override',
+            'backup_limit', 'database_limit', 'allocation_limit', 'startup_override', 'image_override', 'card_background_image',
+            'allowed_upgrade_plan_ids', 'allowed_downgrade_plan_ids',
         ];
         $sets = [];
         $params = ['id' => $id];
@@ -157,7 +163,7 @@ class Plan
                 $sets[] = "`{$field}` = :{$field}";
                 if ($field === 'server_config' && is_array($data[$field])) {
                     $params[$field] = json_encode($data[$field]);
-                } elseif (in_array($field, ['allowed_realms', 'allowed_spells'], true)) {
+                } elseif (in_array($field, ['allowed_realms', 'allowed_spells', 'allowed_upgrade_plan_ids', 'allowed_downgrade_plan_ids'], true)) {
                     $params[$field] = self::encodeIds($data[$field]);
                 } elseif ($field === 'node_ids') {
                     $params[$field] = is_array($data[$field]) ? json_encode(array_map('intval', $data[$field])) : null;

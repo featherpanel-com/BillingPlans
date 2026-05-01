@@ -120,6 +120,21 @@ return function (RouteCollection $routes): void {
         ['DELETE']
     );
 
+    App::getInstance(true)->registerAuthRoute(
+        $routes,
+        'billingplans-user-subscriptions-change-plan',
+        '/api/user/billingplans/subscriptions/{subscriptionId}/change-plan',
+        function (Request $request, array $args) {
+            $subscriptionId = (int) ($args['subscriptionId'] ?? 0);
+            if (!$subscriptionId) {
+                return ApiResponse::error('Invalid subscription ID', 'INVALID_ID', 400);
+            }
+
+            return (new UserSubscriptionsController())->changePlan($request, $subscriptionId);
+        },
+        ['POST']
+    );
+
     App::getInstance(true)->registerAdminRoute(
         $routes,
         'billingplans-admin-categories-list',
@@ -199,6 +214,28 @@ return function (RouteCollection $routes): void {
         },
         Permissions::ADMIN_USERS_VIEW,
         ['GET']
+    );
+
+    App::getInstance(true)->registerAdminRoute(
+        $routes,
+        'billingplans-admin-images-list',
+        '/api/admin/billingplans/images',
+        function (Request $request) {
+            return (new AdminPlansController())->listImages($request);
+        },
+        Permissions::ADMIN_USERS_VIEW,
+        ['GET']
+    );
+
+    App::getInstance(true)->registerAdminRoute(
+        $routes,
+        'billingplans-admin-images-upload',
+        '/api/admin/billingplans/images/upload',
+        function (Request $request) {
+            return (new AdminPlansController())->uploadImage($request);
+        },
+        Permissions::ADMIN_USERS_EDIT,
+        ['POST']
     );
 
     App::getInstance(true)->registerAdminRoute(

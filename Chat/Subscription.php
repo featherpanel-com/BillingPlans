@@ -27,7 +27,8 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name
+            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name,
+                    p.allowed_upgrade_plan_ids, p.allowed_downgrade_plan_ids
              FROM ' . self::$table . ' s
              LEFT JOIN featherpanel_billingplans_plans p ON s.plan_id = p.id
              WHERE s.id = :id LIMIT 1'
@@ -104,7 +105,8 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.description as plan_description
+            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.description as plan_description,
+                    p.allowed_upgrade_plan_ids, p.allowed_downgrade_plan_ids
              FROM ' . self::$table . ' s
              LEFT JOIN featherpanel_billingplans_plans p ON s.plan_id = p.id
              WHERE s.user_id = :user_id
@@ -119,7 +121,8 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.description as plan_description
+            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.description as plan_description,
+                    p.allowed_upgrade_plan_ids, p.allowed_downgrade_plan_ids
              FROM ' . self::$table . ' s
              LEFT JOIN featherpanel_billingplans_plans p ON s.plan_id = p.id
              WHERE s.user_id = :user_id AND s.status IN (\'active\', \'suspended\')
@@ -206,12 +209,17 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'INSERT INTO ' . self::$table . ' (user_id, plan_id, server_uuid, status, next_renewal_at)
-             VALUES (:user_id, :plan_id, :server_uuid, :status, :next_renewal_at)'
+            'INSERT INTO ' . self::$table . ' (user_id, plan_id, coupon_code_id, coupon_code, coupon_scope, renewal_discount_percent, renewal_discount_credits, server_uuid, status, next_renewal_at)
+             VALUES (:user_id, :plan_id, :coupon_code_id, :coupon_code, :coupon_scope, :renewal_discount_percent, :renewal_discount_credits, :server_uuid, :status, :next_renewal_at)'
         );
         $stmt->execute([
             'user_id' => (int) $data['user_id'],
             'plan_id' => (int) $data['plan_id'],
+            'coupon_code_id' => isset($data['coupon_code_id']) ? (int) $data['coupon_code_id'] : null,
+            'coupon_code' => $data['coupon_code'] ?? null,
+            'coupon_scope' => $data['coupon_scope'] ?? null,
+            'renewal_discount_percent' => isset($data['renewal_discount_percent']) ? (float) $data['renewal_discount_percent'] : null,
+            'renewal_discount_credits' => isset($data['renewal_discount_credits']) ? (int) $data['renewal_discount_credits'] : null,
             'server_uuid' => $data['server_uuid'] ?? null,
             'status' => $data['status'] ?? 'active',
             'next_renewal_at' => $data['next_renewal_at'] ?? null,
@@ -265,7 +273,7 @@ class Subscription
     public static function update(int $id, array $data): bool
     {
         $pdo = Database::getPdoConnection();
-        $allowed = ['status', 'server_uuid', 'next_renewal_at', 'suspended_at', 'grace_started_at', 'cancelled_at', 'server_suspend_sync'];
+        $allowed = ['status', 'plan_id', 'coupon_code_id', 'coupon_code', 'coupon_scope', 'renewal_discount_percent', 'renewal_discount_credits', 'server_uuid', 'next_renewal_at', 'suspended_at', 'grace_started_at', 'cancelled_at', 'server_suspend_sync'];
         $sets = [];
         $params = ['id' => $id];
 

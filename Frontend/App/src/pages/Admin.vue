@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
+import { ref, onMounted, computed, watch } from "vue";
 import { useToast } from "vue-toastification";
 import {
   Loader2, Plus, Pencil, Trash2, CreditCard, Users,
@@ -18,6 +18,9 @@ import {
   useSettingsAPI, type BillingPlanSettings,
 } from "@/composables/useSettingsAPI";
 import {
+  useAdminImagesAPI, type AdminImage,
+} from "@/composables/useImagesAdminAPI";
+import {
   useAdminCategoriesAPI, type Category, type CategoryFormData,
   CATEGORY_COLORS, colorClasses,
 } from "@/composables/useCategoriesAPI";
@@ -30,6 +33,7 @@ const {
   loading: subsLoading, listSubscriptions, getStats, cancelSubscription, refundSubscription,
 } = useAdminSubscriptionsAPI();
 const { loading: settingsLoading, getSettings, updateSettings } = useSettingsAPI();
+const { loading: imagesLoading, listImages, uploadImage } = useAdminImagesAPI();
 const {
   loading: catsLoading, listCategories, createCategory, updateCategory, deleteCategory,
 } = useAdminCategoriesAPI();
@@ -37,6 +41,10 @@ const {
 
 type Tab = "plans" | "categories" | "subscriptions" | "settings";
 type View = "list" | "editor";
+type PlanEditorForm = PlanFormData & {
+  allowed_upgrade_plan_ids: number[];
+  allowed_downgrade_plan_ids: number[];
+};
 
 const activeTab = ref<Tab>("plans");
 const currentView = ref<View>("list");
@@ -70,7 +78,7 @@ const settingsForm = ref<BillingPlanSettings>({
   termination_days: 0, send_suspension_email: true, send_termination_email: true,
   allow_user_cancellation: true, generate_invoices: true,
 });
-const planOptions = ref<PlanOptions>({ nodes: [], realms: [], spells: [], categories: [] });
+const planOptions = ref<PlanOptions>({ plans: [], nodes: [], realms: [], spells: [], categories: [] });
 
 
 const plansPage = ref(1);
@@ -89,6 +97,10 @@ const subToCancel = ref<Subscription | null>(null);
 const showRefundSubConfirm = ref(false);
 const subToRefund = ref<Subscription | null>(null);
 const refundCreditsInput = ref(1);
+const availableImages = ref<AdminImage[]>([]);
+const imageSearch = ref("");
+const imageUploadName = ref("");
+const imageUploadFile = ref<File | null>(null);
 
 const PRESET_PERIODS = [
   { label: "Daily", days: 1 }, { label: "Weekly", days: 7 },
@@ -97,7 +109,7 @@ const PRESET_PERIODS = [
   { label: "Annual", days: 365 },
 ];
 
-const emptyForm = (): PlanFormData => ({
+const emptyForm = (): PlanEditorForm => ({
   category_id: null,
   name: "", description: null, long_description: null,
   price_credits: 0, tax_rate_percent: 0, extra_charge_percent: 0, extra_charge_name: null,
@@ -106,10 +118,13 @@ const emptyForm = (): PlanFormData => ({
   memory: 512, cpu: 100, disk: 1024, swap: 0, io: 500,
   backup_limit: 0, database_limit: 0, allocation_limit: null,
   startup_override: null, image_override: null,
+  card_background_image: null,
+  allowed_upgrade_plan_ids: [],
+  allowed_downgrade_plan_ids: [],
   user_can_choose_realm: false, allowed_realms: [],
   user_can_choose_spell: false, allowed_spells: [],
 });
-const planForm = ref<PlanFormData>(emptyForm());
+const planForm = ref<PlanEditorForm>(emptyForm());
 
 function toggleNodeSelection(nodeId: number) {
   if (planForm.value.node_ids.includes(nodeId)) {
@@ -158,12 +173,59 @@ function onAllowedSpellCheckboxChange(spellId: number, checked: boolean) {
   }
 }
 
+function onAllowedUpgradePlanCheckboxChange(planId: number, checked: boolean) {
+  if (checked) {
+    if (!planForm.value.allowed_upgrade_plan_ids.includes(planId)) {
+      planForm.value.allowed_upgrade_plan_ids = [...planForm.value.allowed_upgrade_plan_ids, planId];
+    }
+  } else {
+    planForm.value.allowed_upgrade_plan_ids = planForm.value.allowed_upgrade_plan_ids.filter((id) => id !== planId);
+  }
+}
+
+function onAllowedDowngradePlanCheckboxChange(planId: number, checked: boolean) {
+  if (checked) {
+    if (!planForm.value.allowed_downgrade_plan_ids.includes(planId)) {
+      planForm.value.allowed_downgrade_plan_ids = [...planForm.value.allowed_downgrade_plan_ids, planId];
+    }
+  } else {
+    planForm.value.allowed_downgrade_plan_ids = planForm.value.allowed_downgrade_plan_ids.filter((id) => id !== planId);
+  }
+}
+
 function getPeriodLabel(days: number) {
   return PRESET_PERIODS.find((p) => p.days === days)?.label ?? `${days}d`;
 }
 function formatDate(dt: string | null) {
   if (!dt) return "—";
   return new Date(dt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function normalizeAssetUrl(url: string): string {
+  const raw = url.trim();
+  if (!raw) return "";
+  try {
+    return new URL(raw, window.location.origin).toString();
+  } catch {
+    return raw;
+  }
+}
+
+function isImageIcon(icon: string | null | undefined): boolean {
+  if (!icon) return false;
+  const value = icon.trim().toLowerCase();
+  return (
+    value.startsWith("http://") ||
+    value.startsWith("https://") ||
+    value.startsWith("/") ||
+    value.startsWith("data:image/") ||
+    value.endsWith(".png") ||
+    value.endsWith(".jpg") ||
+    value.endsWith(".jpeg") ||
+    value.endsWith(".gif") ||
+    value.endsWith(".webp") ||
+    value.endsWith(".svg")
+  );
 }
 
 function openAdminPath(path: string) {
@@ -250,6 +312,30 @@ const saveSettings = async () => {
   } catch (e) { toast.error(e instanceof Error ? e.message : "Failed to save settings"); }
 };
 
+const loadImages = async () => {
+  try {
+    const r = await listImages(1, 100, imageSearch.value.trim());
+    availableImages.value = r.images;
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : "Failed to load images");
+  }
+};
+
+const normalizeImageUrl = (url: string | null | undefined): string => {
+  const raw = (url ?? "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("/")) return `${window.location.origin}${raw}`;
+  try {
+    const parsed = new URL(raw, window.location.origin);
+    if (parsed.protocol === "http:" && window.location.protocol === "https:") {
+      parsed.protocol = "https:";
+    }
+    return parsed.toString();
+  } catch {
+    return raw;
+  }
+};
+
 const openCreate = () => {
   editingPlan.value = null;
   planForm.value = emptyForm();
@@ -275,6 +361,9 @@ const openEdit = (plan: Plan) => {
     swap: plan.swap ?? 0, io: plan.io ?? 500, backup_limit: plan.backup_limit ?? 0,
     database_limit: plan.database_limit ?? 0, allocation_limit: plan.allocation_limit,
     startup_override: plan.startup_override, image_override: plan.image_override,
+    card_background_image: plan.card_background_image ?? null,
+    allowed_upgrade_plan_ids: Array.isArray(plan.allowed_upgrade_plan_ids) ? plan.allowed_upgrade_plan_ids : [],
+    allowed_downgrade_plan_ids: Array.isArray(plan.allowed_downgrade_plan_ids) ? plan.allowed_downgrade_plan_ids : [],
     user_can_choose_realm: plan.user_can_choose_realm ?? false,
     allowed_realms: Array.isArray(plan.allowed_realms) ? plan.allowed_realms : [],
     user_can_choose_spell: plan.user_can_choose_spell ?? false,
@@ -315,6 +404,39 @@ const savePlan = async () => {
     currentView.value = "list";
     await loadPlans(); await loadStats();
   } catch (e) { toast.error(e instanceof Error ? e.message : "Failed to save plan"); }
+};
+
+const pickCardImage = (url: string) => {
+  planForm.value.card_background_image = normalizeImageUrl(url);
+};
+
+const clearCardImage = () => {
+  planForm.value.card_background_image = null;
+};
+
+const onImageFileSelected = (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  imageUploadFile.value = input.files?.[0] ?? null;
+};
+
+const uploadCardImage = async () => {
+  if (!imageUploadFile.value) {
+    toast.error("Pick an image file first.");
+    return;
+  }
+  const baseName = imageUploadName.value.trim() || `${planForm.value.name || "Plan"} background`;
+  try {
+    const uploaded = await uploadImage(baseName, imageUploadFile.value);
+    if (uploaded.url) {
+      planForm.value.card_background_image = uploaded.url;
+    }
+    imageUploadName.value = "";
+    imageUploadFile.value = null;
+    await loadImages();
+    toast.success("Image uploaded and selected.");
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : "Failed to upload image");
+  }
 };
 
 const confirmDelete = (plan: Plan) => { planToDelete.value = plan; showDeleteConfirm.value = true; };
@@ -367,6 +489,22 @@ const totalSubscriptions = computed(() => {
 const editorTitle = computed(() => editingPlan.value ? `Edit — ${editingPlan.value.name}` : "New Plan");
 
 onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), loadSettings(), loadOptions(), loadCategories()]));
+
+watch(imageSearch, () => {
+  if (activeTab.value === "plans" && currentView.value === "editor") {
+    void loadImages();
+  }
+});
+
+watch(
+  () => [activeTab.value, currentView.value] as const,
+  ([tab, view]) => {
+    if (tab === "plans" && view === "editor" && availableImages.value.length === 0) {
+      void loadImages();
+    }
+  },
+  { immediate: true }
+);
 </script>
 
 <template>
@@ -478,6 +616,130 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
               <label class="block text-sm font-medium mb-1.5">Full Description <span class="text-muted-foreground font-normal">(shown on detail page)</span></label>
               <textarea v-model="planForm.long_description" rows="4" placeholder="Detailed description of what's included — features, limits, notes..."
                 class="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none" />
+            </div>
+            <div class="md:col-span-2">
+              <label class="block text-sm font-medium mb-1.5">Card Background Image URL <span class="text-muted-foreground font-normal">(optional)</span></label>
+              <input v-model="planForm.card_background_image" placeholder="https://example.com/background.jpg or /attachments/..."
+                class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+              <p class="text-xs text-muted-foreground mt-1">You can paste a direct link, pick from Images, or upload a new file below.</p>
+            </div>
+
+            <div class="md:col-span-2 rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+              <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Allowed plan changes</p>
+              <p class="text-xs text-muted-foreground">Choose exactly which plans users can upgrade/downgrade to from this plan. Empty lists keep legacy behavior (all plans allowed).</p>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <p class="text-xs font-medium text-muted-foreground mb-2">Allowed upgrades</p>
+                  <div class="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                    <label
+                      v-for="p in planOptions.plans.filter((p) => !editingPlan || p.id !== editingPlan.id)"
+                      :key="`up-${p.id}`"
+                      class="flex items-center gap-2 text-xs px-2 py-1.5 rounded-md cursor-pointer transition-colors"
+                      :class="planForm.allowed_upgrade_plan_ids.includes(p.id) ? 'bg-primary/15 text-primary border border-primary/30' : 'bg-background border border-border hover:bg-muted/50'"
+                    >
+                      <input type="checkbox" class="sr-only" :checked="planForm.allowed_upgrade_plan_ids.includes(p.id)"
+                        @change="onAllowedUpgradePlanCheckboxChange(p.id, !planForm.allowed_upgrade_plan_ids.includes(p.id))" />
+                      <span class="w-3 h-3 rounded border shrink-0 flex items-center justify-center transition-colors"
+                        :class="planForm.allowed_upgrade_plan_ids.includes(p.id) ? 'bg-primary border-primary' : 'border-muted-foreground/40'">
+                        <svg v-if="planForm.allowed_upgrade_plan_ids.includes(p.id)" class="w-2 h-2 text-white" fill="none" viewBox="0 0 12 12"><path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      </span>
+                      {{ p.name }}
+                    </label>
+                  </div>
+                </div>
+                <div>
+                  <p class="text-xs font-medium text-muted-foreground mb-2">Allowed downgrades</p>
+                  <div class="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                    <label
+                      v-for="p in planOptions.plans.filter((p) => !editingPlan || p.id !== editingPlan.id)"
+                      :key="`down-${p.id}`"
+                      class="flex items-center gap-2 text-xs px-2 py-1.5 rounded-md cursor-pointer transition-colors"
+                      :class="planForm.allowed_downgrade_plan_ids.includes(p.id) ? 'bg-primary/15 text-primary border border-primary/30' : 'bg-background border border-border hover:bg-muted/50'"
+                    >
+                      <input type="checkbox" class="sr-only" :checked="planForm.allowed_downgrade_plan_ids.includes(p.id)"
+                        @change="onAllowedDowngradePlanCheckboxChange(p.id, !planForm.allowed_downgrade_plan_ids.includes(p.id))" />
+                      <span class="w-3 h-3 rounded border shrink-0 flex items-center justify-center transition-colors"
+                        :class="planForm.allowed_downgrade_plan_ids.includes(p.id) ? 'bg-primary border-primary' : 'border-muted-foreground/40'">
+                        <svg v-if="planForm.allowed_downgrade_plan_ids.includes(p.id)" class="w-2 h-2 text-white" fill="none" viewBox="0 0 12 12"><path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      </span>
+                      {{ p.name }}
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="md:col-span-2 rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+              <div class="flex items-center gap-2">
+                <input
+                  v-model="imageSearch"
+                  type="text"
+                  placeholder="Search images from Admin > Images..."
+                  class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+                <button
+                  type="button"
+                  @click="loadImages"
+                  class="shrink-0 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium hover:bg-accent transition-colors"
+                >
+                  Reload
+                </button>
+              </div>
+
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-2 max-h-56 overflow-y-auto pr-1">
+                <button
+                  v-for="img in availableImages"
+                  :key="img.id"
+                  type="button"
+                  @click="pickCardImage(img.url)"
+                  :title="img.url"
+                  :class="[
+                    'relative rounded-lg border overflow-hidden text-left transition-all',
+                    normalizeImageUrl(planForm.card_background_image) === normalizeImageUrl(img.url)
+                      ? 'border-primary ring-1 ring-primary/40'
+                      : 'border-border hover:border-primary/40'
+                  ]"
+                >
+                  <img :src="normalizeImageUrl(img.url)" :alt="img.name" class="h-20 w-full object-cover bg-black/20" />
+                  <div class="px-2 py-1 bg-card/95">
+                    <p class="text-[11px] font-medium truncate">{{ img.name }}</p>
+                  </div>
+                </button>
+                <div
+                  v-if="!imagesLoading && availableImages.length === 0"
+                  class="col-span-full text-xs text-muted-foreground rounded-lg border border-dashed border-border p-3"
+                >
+                  No images found. Upload one below or add images in Admin &gt; Images.
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-2">
+                <input
+                  v-model="imageUploadName"
+                  type="text"
+                  placeholder="Upload name (optional)"
+                  class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/gif,image/webp"
+                  @change="onImageFileSelected"
+                  class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-1.5 text-xs file:mr-3 file:rounded file:border-0 file:bg-primary/10 file:px-2 file:py-1 file:text-xs file:font-medium file:text-primary"
+                />
+                <button
+                  type="button"
+                  @click="uploadCardImage"
+                  :disabled="imagesLoading || !imageUploadFile"
+                  class="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                >
+                  Upload
+                </button>
+              </div>
+
+              <div class="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                <span class="truncate">Selected: {{ planForm.card_background_image || "none" }}</span>
+                <button type="button" @click="clearCardImage" class="text-primary hover:underline">Clear</button>
+              </div>
             </div>
           </div>
         </div>
@@ -842,7 +1104,8 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
                 </td>
                 <td class="px-4 py-3 hidden sm:table-cell">
                   <span v-if="plan.category" :class="['inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border', colorClasses(plan.category.color)]">
-                    <span v-if="plan.category.icon">{{ plan.category.icon }}</span>
+                    <img v-if="isImageIcon(plan.category.icon)" :src="normalizeAssetUrl(plan.category.icon || '')" :alt="plan.category.name" class="h-3.5 w-3.5 rounded object-cover" />
+                    <span v-else-if="plan.category.icon">{{ plan.category.icon }}</span>
                     {{ plan.category.name }}
                   </span>
                   <span v-else class="text-xs text-muted-foreground/40">—</span>
@@ -928,7 +1191,8 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
             class="bg-card border border-border rounded-xl shadow-sm p-5 flex flex-col gap-3 hover:border-primary/30 transition-colors">
             <div class="flex items-start justify-between gap-2">
               <div class="flex items-center gap-2.5">
-                <div v-if="cat.icon" class="text-2xl leading-none">{{ cat.icon }}</div>
+                <img v-if="isImageIcon(cat.icon)" :src="normalizeAssetUrl(cat.icon || '')" :alt="cat.name" class="h-9 w-9 rounded-lg object-cover" />
+                <div v-else-if="cat.icon" class="text-2xl leading-none">{{ cat.icon }}</div>
                 <div v-else class="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center">
                   <FolderOpen class="h-4 w-4 text-primary" />
                 </div>
@@ -1348,9 +1612,9 @@ onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), load
             
             <div class="flex gap-3">
               <div class="w-20 flex-shrink-0">
-                <label class="block text-xs font-medium text-muted-foreground mb-1.5">Icon (emoji)</label>
-                <input v-model="catForm.icon" maxlength="4" placeholder="🎮"
-                  class="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-center text-lg focus:outline-none focus:ring-2 focus:ring-ring" />
+                <label class="block text-xs font-medium text-muted-foreground mb-1.5">Icon (emoji or image URL)</label>
+                <input v-model="catForm.icon" placeholder="🎮 or /attachments/banner.png"
+                  class="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-center text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
               </div>
               <div class="flex-1">
                 <label class="block text-xs font-medium text-muted-foreground mb-1.5">Name <span class="text-red-400">*</span></label>

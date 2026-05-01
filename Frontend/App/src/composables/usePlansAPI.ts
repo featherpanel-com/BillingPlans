@@ -29,6 +29,7 @@ export interface Plan {
   node_ids?: number[]; // multi-node support
   node_id?: number | null; // legacy
   location_ids?: number[];
+  location_names?: Record<string, string>;
   realms_id: number | null;
   spell_id: number | null;
   memory: number;
@@ -41,6 +42,9 @@ export interface Plan {
   allocation_limit: number | null;
   startup_override: string | null;
   image_override: string | null;
+  card_background_image: string | null;
+  allowed_upgrade_plan_ids: number[];
+  allowed_downgrade_plan_ids: number[];
 
   user_can_choose_realm: boolean;
   user_can_choose_spell: boolean;
@@ -81,11 +85,14 @@ export interface PlanFormData {
   allocation_limit: number | null;
   startup_override: string | null;
   image_override: string | null;
+  card_background_image: string | null;
 
   user_can_choose_realm: boolean;
   user_can_choose_spell: boolean;
   allowed_realms: number[];
   allowed_spells: number[];
+  allowed_upgrade_plan_ids: number[];
+  allowed_downgrade_plan_ids: number[];
 }
 
 export interface PlanOption {
@@ -98,6 +105,7 @@ export interface PlanOption {
 }
 
 export interface PlanOptions {
+  plans: PlanOption[];
   nodes: PlanOption[];
   realms: PlanOption[];
   spells: PlanOption[];
@@ -245,10 +253,13 @@ export function useUserPlansAPI() {
       server_name?: string;
       chosen_realm_id?: number | null;
       chosen_spell_id?: number | null;
+      coupon_code?: string | null;
     }
   ): Promise<{
     subscription: Record<string, unknown>;
     credits_deducted: number;
+    credits_before_discount?: number;
+    coupon?: Record<string, unknown> | null;
     base_credits?: number;
     tax_credits?: number;
     extra_charge_credits?: number;
@@ -262,6 +273,7 @@ export function useUserPlansAPI() {
       if (options?.server_name) body.server_name = options.server_name;
       if (options?.chosen_realm_id) body.chosen_realm_id = options.chosen_realm_id;
       if (options?.chosen_spell_id) body.chosen_spell_id = options.chosen_spell_id;
+      if (options?.coupon_code) body.coupon_code = options.coupon_code;
       const res = await axios.post(
         `/api/user/billingplans/plans/${planId}/subscribe`,
         body

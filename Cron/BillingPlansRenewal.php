@@ -27,9 +27,9 @@ use App\Chat\TimedTask;
 use App\Chat\Allocation;
 use App\Services\Wings\Wings;
 use App\Config\ConfigInterface;
+use App\Addons\billingplans\Chat\Plan;
 use App\Cli\Utils\MinecraftColorCodeSupport;
 use App\Addons\billingplans\Chat\Subscription;
-use App\Addons\billingplans\Chat\Plan;
 use App\Addons\billingcore\Helpers\CreditsHelper;
 use App\Addons\billingplans\Helpers\InvoiceHelper;
 use App\Addons\billingplans\Helpers\SettingsHelper;
@@ -143,18 +143,27 @@ class BillingPlansRenewal implements TimeTask
         $planName = $subscription['plan_name'] ?? 'Unknown Plan';
         $chargeBreakdown = Plan::calculateChargeBreakdown($subscription);
         $priceCredits = (int) $chargeBreakdown['total_credits'];
+        $renewalDiscountPercent = max(0.0, min(100.0, (float) ($subscription['renewal_discount_percent'] ?? 0)));
+        $renewalDiscountCredits = max(0, (int) ($subscription['renewal_discount_credits'] ?? 0));
+        $discountedCredits = $priceCredits;
+        if ($renewalDiscountPercent > 0 || $renewalDiscountCredits > 0) {
+            $percentDiscountCredits = (int) round($priceCredits * ($renewalDiscountPercent / 100), 0, PHP_ROUND_HALF_UP);
+            $totalDiscountCredits = min($priceCredits, max(0, $percentDiscountCredits + $renewalDiscountCredits));
+            $discountedCredits = max(0, $priceCredits - $totalDiscountCredits);
+            $chargeBreakdown['total_credits'] = $discountedCredits;
+        }
         $periodDays = (int) ($subscription['billing_period_days'] ?? 30);
         $serverUuid = $subscription['server_uuid'] ?? null;
         $wasSuspended = $subscription['status'] === 'suspended';
 
         MinecraftColorCodeSupport::sendOutputWithNewLine(
-            "&8  [#$subId] &7Plan: &f$planName &8| &7User: &f#$userId &8| &7Cost: &f$priceCredits cr"
+            "&8  [#$subId] &7Plan: &f$planName &8| &7User: &f#$userId &8| &7Cost: &f$discountedCredits cr"
         );
 
         $currentBalance = CreditsHelper::getUserCredits($userId);
 
-        if ($currentBalance < $priceCredits) {
-            $shortage = $priceCredits - $currentBalance;
+        if ($currentBalance < $discountedCredits) {
+            $shortage = $discountedCredits - $currentBalance;
             $gracePeriodDays = SettingsHelper::getGracePeriodDays();
 
             if ($gracePeriodDays > 0 && !empty($subscription['grace_started_at'])) {
@@ -191,7 +200,7 @@ class BillingPlansRenewal implements TimeTask
             }
 
             if (SettingsHelper::getSendSuspensionEmail()) {
-                $this->sendSuspensionEmail($userId, $planName, $priceCredits, $app);
+                $this->sendSuspensionEmail($userId, $planName, $discountedCredits, $app);
             }
 
             $app->getLogger()->warning("BillingPlans: Subscription #$subId suspended (user #$userId, short {$shortage} cr).");
@@ -199,9 +208,9 @@ class BillingPlansRenewal implements TimeTask
             return 'suspended';
         }
 
-        if (!CreditsHelper::removeUserCredits($userId, $priceCredits)) {
+        if (!CreditsHelper::removeUserCredits($userId, $discountedCredits)) {
             MinecraftColorCodeSupport::sendOutputWithNewLine(
-                "&c  [#$subId] ✘ Failed to deduct {$priceCredits} cr from user #$userId"
+                "&c  [#$subId] ✘ Failed to deduct {$discountedCredits} cr from user #$userId"
             );
             $app->getLogger()->error("BillingPlans: Credit deduction failed for subscription #$subId user #$userId.");
 
@@ -223,11 +232,11 @@ class BillingPlansRenewal implements TimeTask
 
         InvoiceHelper::createRenewalInvoice($userId, $subId, $planName, $chargeBreakdown, $periodDays, $nextRenewal);
 
-        $newBalance = $currentBalance - $priceCredits;
+        $newBalance = $currentBalance - $discountedCredits;
         MinecraftColorCodeSupport::sendOutputWithNewLine(
-            "&a  [#$subId] ✔ Renewed — deducted {$priceCredits} cr (new balance: {$newBalance} cr) | next: $nextRenewal"
+            "&a  [#$subId] ✔ Renewed — deducted {$discountedCredits} cr (new balance: {$newBalance} cr) | next: $nextRenewal"
         );
-        $app->getLogger()->info("BillingPlans: Subscription #$subId renewed (user #$userId, -{$priceCredits} cr, next: $nextRenewal).");
+        $app->getLogger()->info("BillingPlans: Subscription #$subId renewed (user #$userId, -{$discountedCredits} cr, next: $nextRenewal).");
 
         return 'renewed';
     }
