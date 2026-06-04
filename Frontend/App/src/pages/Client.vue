@@ -42,6 +42,7 @@ const subToChange = ref<Subscription | null>(null);
 const targetPlanId = ref<number | null>(null);
 const changingPlan = ref(false);
 const expandedPlanId = ref<number | null>(null);
+const showCostBreakdown = ref(false);
 const PERIOD_MAP: Record<number, string> = {
   1: "Daily", 7: "Weekly", 14: "Bi-Weekly", 30: "Monthly",
   90: "Quarterly", 180: "Semi-Annual", 365: "Annual",
@@ -349,6 +350,59 @@ const sliderAdditionalCredits = computed(() => {
     }
   });
   return extra;
+});
+
+const resourceCostBreakdown = computed(() => {
+  const breakdown: { name: string; value: string; extraCredits: number }[] = [];
+  if (!planToSubscribe.value) return breakdown;
+  const config = planToSubscribe.value.slider_config;
+  if (!config) return breakdown;
+
+  const resourceNames: Record<string, string> = {
+    memory: "RAM",
+    cpu: "CPU",
+    disk: "Disk Space",
+    database_limit: "Databases",
+    backup_limit: "Backups",
+    allocation_limit: "Allocations",
+  };
+
+  Object.entries(config).forEach(([key, cfg]) => {
+    if (cfg && cfg.enabled) {
+      const baseVal = Number(cfg.base ?? 0);
+      const maxVal = Number(cfg.max ?? 0);
+      const stepVal = Number(cfg.step ?? 1);
+      const costPerStep = Number(cfg.cost_per_step ?? 0);
+      const rounding = cfg.rounding ?? "nearest";
+
+      let selectedVal = customResources.value[key] !== undefined ? customResources.value[key] : baseVal;
+      selectedVal = Math.max(baseVal, Math.min(maxVal, selectedVal));
+
+      if (selectedVal > baseVal) {
+        const diff = selectedVal - baseVal;
+        let steps = diff / (stepVal || 1);
+        if (rounding === "up") {
+          steps = Math.ceil(steps);
+        } else if (rounding === "down") {
+          steps = Math.floor(steps);
+        } else {
+          steps = Math.round(steps);
+        }
+        const extraCredits = steps * costPerStep;
+        if (extraCredits > 0) {
+          const name = resourceNames[key] ?? key;
+          let valueStr = selectedVal.toString();
+          if (key === "memory" || key === "disk") {
+            valueStr = fmtMB(selectedVal);
+          } else if (key === "cpu") {
+            valueStr = selectedVal + "%";
+          }
+          breakdown.push({ name, value: valueStr, extraCredits });
+        }
+      }
+    }
+  });
+  return breakdown;
 });
 
 const liveTotalCredits = computed(() => {
@@ -698,7 +752,16 @@ onMounted(async () => {
             </div>
             <div class="px-5 py-3 text-xs text-muted-foreground space-y-1">
               <div>Base plan price: {{ (planToSubscribe.price_credits).toLocaleString() }} credits</div>
-              <div v-if="sliderAdditionalCredits > 0" class="text-amber-500">Resource customizations: +{{ sliderAdditionalCredits.toLocaleString() }} credits</div>
+              <div v-if="sliderAdditionalCredits > 0" class="flex items-center justify-between cursor-pointer hover:text-foreground transition-colors" @click="showCostBreakdown = !showCostBreakdown">
+                <span class="text-amber-500">Resource customizations: +{{ sliderAdditionalCredits.toLocaleString() }} credits</span>
+                <ChevronDown :class="['h-3.5 w-3.5 transition-transform', showCostBreakdown ? 'rotate-180' : '']" />
+              </div>
+              <div v-if="showCostBreakdown && resourceCostBreakdown.length > 0" class="pl-4 space-y-1 text-[11px] border-l-2 border-amber-500/30 ml-2">
+                <div v-for="item in resourceCostBreakdown" :key="item.name" class="flex justify-between">
+                  <span>{{ item.name }} ({{ item.value }}):</span>
+                  <span class="text-amber-500">+{{ item.extraCredits.toLocaleString() }} credits</span>
+                </div>
+              </div>
               <div v-if="(planToSubscribe.tax_rate_percent ?? 0) > 0">Tax ({{ planToSubscribe.tax_rate_percent }}%): +{{ Math.round((planToSubscribe.price_credits + sliderAdditionalCredits) * ((planToSubscribe.tax_rate_percent ?? 0) / 100)).toLocaleString() }} credits</div>
               <div v-if="(planToSubscribe.extra_charge_percent ?? 0) > 0">{{ planToSubscribe.extra_charge_name || 'Additional charge' }} ({{ planToSubscribe.extra_charge_percent }}%): +{{ Math.round((planToSubscribe.price_credits + sliderAdditionalCredits) * ((planToSubscribe.extra_charge_percent ?? 0) / 100)).toLocaleString() }} credits</div>
             </div>
