@@ -370,6 +370,7 @@ const startSubscribe = (plan: Plan) => {
   }
   // Initialize slider state
   customResources.value = {};
+  // Debug: log slider_config to help diagnose issues
   if (plan.slider_config) {
     Object.entries(plan.slider_config).forEach(([key, cfg]) => {
       if (cfg && cfg.enabled) {
@@ -443,7 +444,7 @@ const candidatePlansForSub = computed<Plan[]>(() => {
   const allowedDown = Array.isArray(sub.allowed_downgrade_plan_ids) ? sub.allowed_downgrade_plan_ids : [];
   const hasExplicitRules = allowedUp.length > 0 || allowedDown.length > 0;
 
-  return plans.value.filter((p) => {
+  return plans.value.filter((p: Plan) => {
     if (p.id === sub.plan_id || p.is_active !== 1) return false;
     if (!hasExplicitRules) return true;
     const delta = (p.total_credits ?? p.price_credits) - sub.price_credits;
@@ -502,10 +503,10 @@ const toggleExpand = (planId: number) => {
 };
 
 const activeSubscriptions = computed(() =>
-  subscriptions.value.filter((s) => s.status === "active" || s.status === "suspended")
+  subscriptions.value.filter((s: Subscription) => s.status === "active" || s.status === "suspended")
 );
 const pastSubscriptions = computed(() =>
-  subscriptions.value.filter((s) => s.status === "cancelled" || s.status === "expired")
+  subscriptions.value.filter((s: Subscription) => s.status === "cancelled" || s.status === "expired")
 );
 const balanceAfter = computed(() =>
   planToSubscribe.value ? userCredits.value - liveTotalCredits.value : 0
