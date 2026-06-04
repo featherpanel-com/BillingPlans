@@ -81,6 +81,15 @@ class PlansController
             $plan["allowed_downgrade_plan_ids"] = Plan::decodeIds(
                 $plan["allowed_downgrade_plan_ids"] ?? null,
             );
+            if (
+                isset($plan["slider_config"]) &&
+                is_string($plan["slider_config"])
+            ) {
+                $plan["slider_config"] = json_decode(
+                    $plan["slider_config"],
+                    true,
+                );
+            }
             $plan["user_can_choose_realm"] =
                 (bool) ($plan["user_can_choose_realm"] ?? false);
             $plan["user_can_choose_spell"] =
@@ -166,6 +175,15 @@ class PlansController
         $plan["allowed_downgrade_plan_ids"] = Plan::decodeIds(
             $plan["allowed_downgrade_plan_ids"] ?? null,
         );
+        if (
+            isset($plan["slider_config"]) &&
+            is_string($plan["slider_config"])
+        ) {
+            $plan["slider_config"] = json_decode(
+                $plan["slider_config"],
+                true,
+            );
+        }
         $plan["user_can_choose_realm"] =
             (bool) ($plan["user_can_choose_realm"] ?? false);
         $plan["user_can_choose_spell"] =
@@ -577,6 +595,15 @@ class PlansController
         ) {
             $updated["server_config"] = json_decode(
                 $updated["server_config"],
+                true,
+            );
+        }
+        if (
+            isset($updated["slider_config"]) &&
+            is_string($updated["slider_config"])
+        ) {
+            $updated["slider_config"] = json_decode(
+                $updated["slider_config"],
                 true,
             );
         }
