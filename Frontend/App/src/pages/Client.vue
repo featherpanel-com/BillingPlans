@@ -279,14 +279,6 @@ const closeSubscribeFlow = () => {
   chosenSpellId.value = null;
 };
 
-const emptyForm = () => {
-  serverName.value = "";
-  couponCode.value = "";
-  chosenRealmId.value = null;
-  chosenSpellId.value = null;
-  customResources.value = {};
-};
-
 const customResources = ref<Record<string, number>>({});
 
 const RESOURCES_LIST = [
@@ -605,7 +597,7 @@ onMounted(async () => {
                   <span class="text-muted-foreground">{{ res.name }}</span>
                 </div>
                 <span class="font-bold text-foreground">
-                  {{ res.key === 'memory' || res.key === 'disk' ? fmtMB(planToSubscribe[res.key]) : (planToSubscribe[res.key] != null ? planToSubscribe[res.key] : 'Unlimited') }}{{ res.unit }}
+                  {{ res.key === 'memory' || res.key === 'disk' ? fmtMB((planToSubscribe as any)[res.key]) : ((planToSubscribe as any)[res.key] != null ? (planToSubscribe as any)[res.key] : 'Unlimited') }}{{ res.unit }}
                   <span class="text-[10px] text-muted-foreground font-normal ml-1">(Fixed)</span>
                 </span>
               </div>
@@ -706,8 +698,8 @@ onMounted(async () => {
             <div class="px-5 py-3 text-xs text-muted-foreground space-y-1">
               <div>Base plan price: {{ (planToSubscribe.price_credits).toLocaleString() }} credits</div>
               <div v-if="sliderAdditionalCredits > 0" class="text-amber-500">Resource customizations: +{{ sliderAdditionalCredits.toLocaleString() }} credits</div>
-              <div v-if="planToSubscribe.tax_rate_percent > 0">Tax ({{ planToSubscribe.tax_rate_percent }}%): +{{ Math.round((planToSubscribe.price_credits + sliderAdditionalCredits) * (planToSubscribe.tax_rate_percent / 100)).toLocaleString() }} credits</div>
-              <div v-if="planToSubscribe.extra_charge_percent > 0">{{ planToSubscribe.extra_charge_name || 'Additional charge' }} ({{ planToSubscribe.extra_charge_percent }}%): +{{ Math.round((planToSubscribe.price_credits + sliderAdditionalCredits) * (planToSubscribe.extra_charge_percent / 100)).toLocaleString() }} credits</div>
+              <div v-if="(planToSubscribe.tax_rate_percent ?? 0) > 0">Tax ({{ planToSubscribe.tax_rate_percent }}%): +{{ Math.round((planToSubscribe.price_credits + sliderAdditionalCredits) * ((planToSubscribe.tax_rate_percent ?? 0) / 100)).toLocaleString() }} credits</div>
+              <div v-if="(planToSubscribe.extra_charge_percent ?? 0) > 0">{{ planToSubscribe.extra_charge_name || 'Additional charge' }} ({{ planToSubscribe.extra_charge_percent }}%): +{{ Math.round((planToSubscribe.price_credits + sliderAdditionalCredits) * ((planToSubscribe.extra_charge_percent ?? 0) / 100)).toLocaleString() }} credits</div>
             </div>
             <div class="flex justify-between items-center px-5 py-3 gap-4 text-sm bg-muted/20">
               <span class="text-muted-foreground">Balance after</span>
