@@ -477,6 +477,9 @@ class PlansController
         if (array_key_exists("server_config", $data)) {
             $updateData["server_config"] = $data["server_config"];
         }
+        if (array_key_exists("slider_config", $data)) {
+            $updateData["slider_config"] = $data["slider_config"];
+        }
         if (array_key_exists("max_subscriptions", $data)) {
             $updateData["max_subscriptions"] =
                 $data["max_subscriptions"] !== null &&
