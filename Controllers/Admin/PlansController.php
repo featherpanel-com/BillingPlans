@@ -46,48 +46,86 @@ class PlansController
     // )]
     public function list(Request $request): Response
     {
-        $page = max(1, (int) $request->query->get('page', 1));
-        $limit = min(100, max(1, (int) $request->query->get('limit', 20)));
-        $search = (string) $request->query->get('search', '');
+        $page = max(1, (int) $request->query->get("page", 1));
+        $limit = min(100, max(1, (int) $request->query->get("limit", 20)));
+        $search = (string) $request->query->get("search", "");
 
         $result = Plan::getPaginated($page, $limit, $search);
 
         $categoryCache = [];
-        foreach ($result['data'] as &$plan) {
-            $plan['billing_period_label'] = Plan::getBillingPeriodLabel((int) $plan['billing_period_days']);
-            $plan['active_subscription_count'] = Plan::getActiveSubscriptionCount((int) $plan['id']);
-            if (isset($plan['server_config']) && is_string($plan['server_config'])) {
-                $plan['server_config'] = json_decode($plan['server_config'], true);
+        foreach ($result["data"] as &$plan) {
+            $plan["billing_period_label"] = Plan::getBillingPeriodLabel(
+                (int) $plan["billing_period_days"],
+            );
+            $plan[
+                "active_subscription_count"
+            ] = Plan::getActiveSubscriptionCount((int) $plan["id"]);
+            if (
+                isset($plan["server_config"]) &&
+                is_string($plan["server_config"])
+            ) {
+                $plan["server_config"] = json_decode(
+                    $plan["server_config"],
+                    true,
+                );
             }
-            $plan['allowed_realms'] = Plan::decodeIds($plan['allowed_realms'] ?? null);
-            $plan['allowed_spells'] = Plan::decodeIds($plan['allowed_spells'] ?? null);
-            $plan['allowed_upgrade_plan_ids'] = Plan::decodeIds($plan['allowed_upgrade_plan_ids'] ?? null);
-            $plan['allowed_downgrade_plan_ids'] = Plan::decodeIds($plan['allowed_downgrade_plan_ids'] ?? null);
-            $plan['user_can_choose_realm'] = (bool) ($plan['user_can_choose_realm'] ?? false);
-            $plan['user_can_choose_spell'] = (bool) ($plan['user_can_choose_spell'] ?? false);
-            $plan['tax_rate_percent'] = round((float) ($plan['tax_rate_percent'] ?? 0), 2);
-            $plan['extra_charge_percent'] = round((float) ($plan['extra_charge_percent'] ?? 0), 2);
-            $plan['extra_charge_name'] = isset($plan['extra_charge_name']) ? trim((string) $plan['extra_charge_name']) : null;
+            $plan["allowed_realms"] = Plan::decodeIds(
+                $plan["allowed_realms"] ?? null,
+            );
+            $plan["allowed_spells"] = Plan::decodeIds(
+                $plan["allowed_spells"] ?? null,
+            );
+            $plan["allowed_upgrade_plan_ids"] = Plan::decodeIds(
+                $plan["allowed_upgrade_plan_ids"] ?? null,
+            );
+            $plan["allowed_downgrade_plan_ids"] = Plan::decodeIds(
+                $plan["allowed_downgrade_plan_ids"] ?? null,
+            );
+            $plan["user_can_choose_realm"] =
+                (bool) ($plan["user_can_choose_realm"] ?? false);
+            $plan["user_can_choose_spell"] =
+                (bool) ($plan["user_can_choose_spell"] ?? false);
+            $plan["tax_rate_percent"] = round(
+                (float) ($plan["tax_rate_percent"] ?? 0),
+                2,
+            );
+            $plan["extra_charge_percent"] = round(
+                (float) ($plan["extra_charge_percent"] ?? 0),
+                2,
+            );
+            $plan["extra_charge_name"] = isset($plan["extra_charge_name"])
+                ? trim((string) $plan["extra_charge_name"])
+                : null;
             $breakdown = Plan::calculateChargeBreakdown($plan);
-            $plan['base_credits'] = (int) $breakdown['base_credits'];
-            $plan['tax_credits'] = (int) $breakdown['tax_credits'];
-            $plan['extra_charge_credits'] = (int) $breakdown['extra_charge_credits'];
-            $plan['total_credits'] = (int) $breakdown['total_credits'];
-            $plan['category'] = self::resolveCategory((int) ($plan['category_id'] ?? 0), $categoryCache);
+            $plan["base_credits"] = (int) $breakdown["base_credits"];
+            $plan["tax_credits"] = (int) $breakdown["tax_credits"];
+            $plan["extra_charge_credits"] =
+                (int) $breakdown["extra_charge_credits"];
+            $plan["total_credits"] = (int) $breakdown["total_credits"];
+            $plan["category"] = self::resolveCategory(
+                (int) ($plan["category_id"] ?? 0),
+                $categoryCache,
+            );
         }
 
-        return ApiResponse::success([
-            'data' => $result['data'],
-            'meta' => [
-                'pagination' => [
-                    'total' => $result['total'],
-                    'count' => count($result['data']),
-                    'per_page' => $limit,
-                    'current_page' => $page,
-                    'total_pages' => (int) ceil($result['total'] / max(1, $limit)),
+        return ApiResponse::success(
+            [
+                "data" => $result["data"],
+                "meta" => [
+                    "pagination" => [
+                        "total" => $result["total"],
+                        "count" => count($result["data"]),
+                        "per_page" => $limit,
+                        "current_page" => $page,
+                        "total_pages" => (int) ceil(
+                            $result["total"] / max(1, $limit),
+                        ),
+                    ],
                 ],
             ],
-        ], 'Plans retrieved successfully', 200);
+            "Plans retrieved successfully",
+            200,
+        );
     }
 
     // #[OA\Get(
@@ -104,31 +142,58 @@ class PlansController
     {
         $plan = Plan::getById($planId);
         if ($plan === null) {
-            return ApiResponse::error('Plan not found', 'PLAN_NOT_FOUND', 404);
+            return ApiResponse::error("Plan not found", "PLAN_NOT_FOUND", 404);
         }
 
-        $plan['billing_period_label'] = Plan::getBillingPeriodLabel((int) $plan['billing_period_days']);
-        if (isset($plan['server_config']) && is_string($plan['server_config'])) {
-            $plan['server_config'] = json_decode($plan['server_config'], true);
+        $plan["billing_period_label"] = Plan::getBillingPeriodLabel(
+            (int) $plan["billing_period_days"],
+        );
+        if (
+            isset($plan["server_config"]) &&
+            is_string($plan["server_config"])
+        ) {
+            $plan["server_config"] = json_decode($plan["server_config"], true);
         }
-        $plan['allowed_realms'] = Plan::decodeIds($plan['allowed_realms'] ?? null);
-        $plan['allowed_spells'] = Plan::decodeIds($plan['allowed_spells'] ?? null);
-        $plan['allowed_upgrade_plan_ids'] = Plan::decodeIds($plan['allowed_upgrade_plan_ids'] ?? null);
-        $plan['allowed_downgrade_plan_ids'] = Plan::decodeIds($plan['allowed_downgrade_plan_ids'] ?? null);
-        $plan['user_can_choose_realm'] = (bool) ($plan['user_can_choose_realm'] ?? false);
-        $plan['user_can_choose_spell'] = (bool) ($plan['user_can_choose_spell'] ?? false);
-        $plan['tax_rate_percent'] = round((float) ($plan['tax_rate_percent'] ?? 0), 2);
-        $plan['extra_charge_percent'] = round((float) ($plan['extra_charge_percent'] ?? 0), 2);
-        $plan['extra_charge_name'] = isset($plan['extra_charge_name']) ? trim((string) $plan['extra_charge_name']) : null;
+        $plan["allowed_realms"] = Plan::decodeIds(
+            $plan["allowed_realms"] ?? null,
+        );
+        $plan["allowed_spells"] = Plan::decodeIds(
+            $plan["allowed_spells"] ?? null,
+        );
+        $plan["allowed_upgrade_plan_ids"] = Plan::decodeIds(
+            $plan["allowed_upgrade_plan_ids"] ?? null,
+        );
+        $plan["allowed_downgrade_plan_ids"] = Plan::decodeIds(
+            $plan["allowed_downgrade_plan_ids"] ?? null,
+        );
+        $plan["user_can_choose_realm"] =
+            (bool) ($plan["user_can_choose_realm"] ?? false);
+        $plan["user_can_choose_spell"] =
+            (bool) ($plan["user_can_choose_spell"] ?? false);
+        $plan["tax_rate_percent"] = round(
+            (float) ($plan["tax_rate_percent"] ?? 0),
+            2,
+        );
+        $plan["extra_charge_percent"] = round(
+            (float) ($plan["extra_charge_percent"] ?? 0),
+            2,
+        );
+        $plan["extra_charge_name"] = isset($plan["extra_charge_name"])
+            ? trim((string) $plan["extra_charge_name"])
+            : null;
         $breakdown = Plan::calculateChargeBreakdown($plan);
-        $plan['base_credits'] = (int) $breakdown['base_credits'];
-        $plan['tax_credits'] = (int) $breakdown['tax_credits'];
-        $plan['extra_charge_credits'] = (int) $breakdown['extra_charge_credits'];
-        $plan['total_credits'] = (int) $breakdown['total_credits'];
+        $plan["base_credits"] = (int) $breakdown["base_credits"];
+        $plan["tax_credits"] = (int) $breakdown["tax_credits"];
+        $plan["extra_charge_credits"] =
+            (int) $breakdown["extra_charge_credits"];
+        $plan["total_credits"] = (int) $breakdown["total_credits"];
         $noCache = [];
-        $plan['category'] = self::resolveCategory((int) ($plan['category_id'] ?? 0), $noCache);
+        $plan["category"] = self::resolveCategory(
+            (int) ($plan["category_id"] ?? 0),
+            $noCache,
+        );
 
-        return ApiResponse::success($plan, 'Plan retrieved successfully', 200);
+        return ApiResponse::success($plan, "Plan retrieved successfully", 200);
     }
 
     // #[OA\Post(
@@ -156,85 +221,154 @@ class PlansController
     // )]
     public function create(Request $request): Response
     {
-        $admin = $request->get('user');
+        $admin = $request->get("user");
         $data = json_decode($request->getContent(), true);
 
         if ($data === null) {
-            return ApiResponse::error('Invalid JSON', 'INVALID_JSON', 400);
+            return ApiResponse::error("Invalid JSON", "INVALID_JSON", 400);
         }
 
-        if (empty($data['name'])) {
-            return ApiResponse::error('Plan name is required', 'MISSING_NAME', 400);
+        if (empty($data["name"])) {
+            return ApiResponse::error(
+                "Plan name is required",
+                "MISSING_NAME",
+                400,
+            );
         }
 
-        $priceCredits = isset($data['price_credits']) ? (int) $data['price_credits'] : null;
+        $priceCredits = isset($data["price_credits"])
+            ? (int) $data["price_credits"]
+            : null;
         if ($priceCredits === null || $priceCredits < 0) {
-            return ApiResponse::error('price_credits must be a non-negative integer', 'INVALID_PRICE', 400);
+            return ApiResponse::error(
+                "price_credits must be a non-negative integer",
+                "INVALID_PRICE",
+                400,
+            );
         }
 
-        $billingPeriodDays = isset($data['billing_period_days']) ? (int) $data['billing_period_days'] : null;
+        $billingPeriodDays = isset($data["billing_period_days"])
+            ? (int) $data["billing_period_days"]
+            : null;
         if ($billingPeriodDays === null || $billingPeriodDays < 1) {
-            return ApiResponse::error('billing_period_days must be at least 1', 'INVALID_PERIOD', 400);
+            return ApiResponse::error(
+                "billing_period_days must be at least 1",
+                "INVALID_PERIOD",
+                400,
+            );
         }
 
         // Multi-node support: normalize node_ids
         $selectedNodeIds = [];
-        if (!empty($data['node_ids']) && is_array($data['node_ids'])) {
-            $selectedNodeIds = array_map('intval', $data['node_ids']);
-        } elseif (!empty($data['node_id'])) {
-            $selectedNodeIds = [(int) $data['node_id']];
+        if (!empty($data["node_ids"]) && is_array($data["node_ids"])) {
+            $selectedNodeIds = array_map("intval", $data["node_ids"]);
+        } elseif (!empty($data["node_id"])) {
+            $selectedNodeIds = [(int) $data["node_id"]];
         }
         $planId = Plan::create([
-            'category_id' => isset($data['category_id']) && $data['category_id'] ? (int) $data['category_id'] : null,
-            'name' => trim($data['name']),
-            'description' => isset($data['description']) ? trim($data['description']) : null,
-            'long_description' => isset($data['long_description']) ? trim($data['long_description']) : null,
-            'price_credits' => $priceCredits,
-            'billing_period_days' => $billingPeriodDays,
-            'tax_rate_percent' => isset($data['tax_rate_percent']) ? (float) $data['tax_rate_percent'] : 0,
-            'extra_charge_percent' => isset($data['extra_charge_percent']) ? (float) $data['extra_charge_percent'] : 0,
-            'extra_charge_name' => isset($data['extra_charge_name']) ? trim((string) $data['extra_charge_name']) : null,
-            'is_active' => isset($data['is_active']) ? (int) filter_var($data['is_active'], FILTER_VALIDATE_BOOLEAN) : 1,
-            'max_subscriptions' => (isset($data['max_subscriptions']) && $data['max_subscriptions'] !== null && $data['max_subscriptions'] !== '') ? max(1, (int) $data['max_subscriptions']) : null,
-            'server_config' => $data['server_config'] ?? null,
-            'node_ids' => $selectedNodeIds,
-            'node_id' => isset($data['node_id']) && $data['node_id'] ? (int) $data['node_id'] : null, // legacy
-            'realms_id' => isset($data['realms_id']) && $data['realms_id'] ? (int) $data['realms_id'] : null,
-            'user_can_choose_realm' => !empty($data['user_can_choose_realm']),
-            'allowed_realms' => $data['allowed_realms'] ?? null,
-            'spell_id' => isset($data['spell_id']) && $data['spell_id'] ? (int) $data['spell_id'] : null,
-            'user_can_choose_spell' => !empty($data['user_can_choose_spell']),
-            'allowed_spells' => $data['allowed_spells'] ?? null,
-            'allowed_upgrade_plan_ids' => $data['allowed_upgrade_plan_ids'] ?? null,
-            'allowed_downgrade_plan_ids' => $data['allowed_downgrade_plan_ids'] ?? null,
-            'memory' => (int) ($data['memory'] ?? 512),
-            'cpu' => (int) ($data['cpu'] ?? 100),
-            'disk' => (int) ($data['disk'] ?? 1024),
-            'swap' => (int) ($data['swap'] ?? 0),
-            'io' => (int) ($data['io'] ?? 500),
-            'backup_limit' => (int) ($data['backup_limit'] ?? 0),
-            'database_limit' => (int) ($data['database_limit'] ?? 0),
-            'allocation_limit' => isset($data['allocation_limit']) && $data['allocation_limit'] !== null && $data['allocation_limit'] !== '' ? (int) $data['allocation_limit'] : null,
-            'startup_override' => isset($data['startup_override']) && $data['startup_override'] !== '' ? trim($data['startup_override']) : null,
-            'image_override' => isset($data['image_override']) && $data['image_override'] !== '' ? trim($data['image_override']) : null,
-            'card_background_image' => isset($data['card_background_image']) && $data['card_background_image'] !== '' ? trim($data['card_background_image']) : null,
+            "category_id" =>
+                isset($data["category_id"]) && $data["category_id"]
+                    ? (int) $data["category_id"]
+                    : null,
+            "name" => trim($data["name"]),
+            "description" => isset($data["description"])
+                ? trim($data["description"])
+                : null,
+            "long_description" => isset($data["long_description"])
+                ? trim($data["long_description"])
+                : null,
+            "price_credits" => $priceCredits,
+            "billing_period_days" => $billingPeriodDays,
+            "tax_rate_percent" => isset($data["tax_rate_percent"])
+                ? (float) $data["tax_rate_percent"]
+                : 0,
+            "extra_charge_percent" => isset($data["extra_charge_percent"])
+                ? (float) $data["extra_charge_percent"]
+                : 0,
+            "extra_charge_name" => isset($data["extra_charge_name"])
+                ? trim((string) $data["extra_charge_name"])
+                : null,
+            "is_active" => isset($data["is_active"])
+                ? (int) filter_var($data["is_active"], FILTER_VALIDATE_BOOLEAN)
+                : 1,
+            "max_subscriptions" =>
+                isset($data["max_subscriptions"]) &&
+                $data["max_subscriptions"] !== null &&
+                $data["max_subscriptions"] !== ""
+                    ? max(1, (int) $data["max_subscriptions"])
+                    : null,
+            "server_config" => $data["server_config"] ?? null,
+            "node_ids" => $selectedNodeIds,
+            "node_id" =>
+                isset($data["node_id"]) && $data["node_id"]
+                    ? (int) $data["node_id"]
+                    : null, // legacy
+            "realms_id" =>
+                isset($data["realms_id"]) && $data["realms_id"]
+                    ? (int) $data["realms_id"]
+                    : null,
+            "user_can_choose_realm" => !empty($data["user_can_choose_realm"]),
+            "allowed_realms" => $data["allowed_realms"] ?? null,
+            "spell_id" =>
+                isset($data["spell_id"]) && $data["spell_id"]
+                    ? (int) $data["spell_id"]
+                    : null,
+            "user_can_choose_spell" => !empty($data["user_can_choose_spell"]),
+            "allowed_spells" => $data["allowed_spells"] ?? null,
+            "allowed_upgrade_plan_ids" =>
+                $data["allowed_upgrade_plan_ids"] ?? null,
+            "allowed_downgrade_plan_ids" =>
+                $data["allowed_downgrade_plan_ids"] ?? null,
+            "memory" => (int) ($data["memory"] ?? 512),
+            "cpu" => (int) ($data["cpu"] ?? 100),
+            "disk" => (int) ($data["disk"] ?? 1024),
+            "swap" => (int) ($data["swap"] ?? 0),
+            "io" => (int) ($data["io"] ?? 500),
+            "backup_limit" => (int) ($data["backup_limit"] ?? 0),
+            "database_limit" => (int) ($data["database_limit"] ?? 0),
+            "allocation_limit" =>
+                isset($data["allocation_limit"]) &&
+                $data["allocation_limit"] !== null &&
+                $data["allocation_limit"] !== ""
+                    ? (int) $data["allocation_limit"]
+                    : null,
+            "startup_override" =>
+                isset($data["startup_override"]) &&
+                $data["startup_override"] !== ""
+                    ? trim($data["startup_override"])
+                    : null,
+            "image_override" =>
+                isset($data["image_override"]) && $data["image_override"] !== ""
+                    ? trim($data["image_override"])
+                    : null,
+            "card_background_image" =>
+                isset($data["card_background_image"]) &&
+                $data["card_background_image"] !== ""
+                    ? trim($data["card_background_image"])
+                    : null,
         ]);
 
         if ($planId === null) {
-            return ApiResponse::error('Failed to create plan', 'CREATE_PLAN_FAILED', 500);
+            return ApiResponse::error(
+                "Failed to create plan",
+                "CREATE_PLAN_FAILED",
+                500,
+            );
         }
 
         $plan = Plan::getById($planId);
-        $plan['billing_period_label'] = Plan::getBillingPeriodLabel((int) $plan['billing_period_days']);
+        $plan["billing_period_label"] = Plan::getBillingPeriodLabel(
+            (int) $plan["billing_period_days"],
+        );
 
         Activity::createActivity([
-            'user_uuid' => $admin['uuid'] ?? null,
-            'name' => 'billingplans_create_plan',
-            'context' => "Created billing plan: {$plan['name']} (ID: {$planId}, price: {$priceCredits} credits, period: {$billingPeriodDays} days)",
-            'ip_address' => CloudFlareRealIP::getRealIP(),
+            "user_uuid" => $admin["uuid"] ?? null,
+            "name" => "billingplans_create_plan",
+            "context" => "Created billing plan: {$plan["name"]} (ID: {$planId}, price: {$priceCredits} credits, period: {$billingPeriodDays} days)",
+            "ip_address" => CloudFlareRealIP::getRealIP(),
         ]);
 
-        return ApiResponse::success($plan, 'Plan created successfully', 200);
+        return ApiResponse::success($plan, "Plan created successfully", 200);
     }
 
     // #[OA\Patch(
@@ -262,123 +396,199 @@ class PlansController
     // )]
     public function update(Request $request, int $planId): Response
     {
-        $admin = $request->get('user');
+        $admin = $request->get("user");
         $plan = Plan::getById($planId);
         if ($plan === null) {
-            return ApiResponse::error('Plan not found', 'PLAN_NOT_FOUND', 404);
+            return ApiResponse::error("Plan not found", "PLAN_NOT_FOUND", 404);
         }
 
         $data = json_decode($request->getContent(), true);
         if ($data === null) {
-            return ApiResponse::error('Invalid JSON', 'INVALID_JSON', 400);
+            return ApiResponse::error("Invalid JSON", "INVALID_JSON", 400);
         }
 
         $updateData = [];
-        if (array_key_exists('category_id', $data)) {
-            $updateData['category_id'] = $data['category_id'] ? (int) $data['category_id'] : null;
+        if (array_key_exists("category_id", $data)) {
+            $updateData["category_id"] = $data["category_id"]
+                ? (int) $data["category_id"]
+                : null;
         }
-        if (isset($data['name'])) {
-            $updateData['name'] = trim($data['name']);
+        if (isset($data["name"])) {
+            $updateData["name"] = trim($data["name"]);
         }
-        if (array_key_exists('description', $data)) {
-            $updateData['description'] = isset($data['description']) ? trim($data['description']) : null;
+        if (array_key_exists("description", $data)) {
+            $updateData["description"] = isset($data["description"])
+                ? trim($data["description"])
+                : null;
         }
-        if (array_key_exists('long_description', $data)) {
-            $updateData['long_description'] = isset($data['long_description']) && $data['long_description'] !== '' ? trim($data['long_description']) : null;
+        if (array_key_exists("long_description", $data)) {
+            $updateData["long_description"] =
+                isset($data["long_description"]) &&
+                $data["long_description"] !== ""
+                    ? trim($data["long_description"])
+                    : null;
         }
-        if (isset($data['price_credits'])) {
-            $updateData['price_credits'] = max(0, (int) $data['price_credits']);
+        if (isset($data["price_credits"])) {
+            $updateData["price_credits"] = max(0, (int) $data["price_credits"]);
         }
-        if (isset($data['billing_period_days'])) {
-            $updateData['billing_period_days'] = max(1, (int) $data['billing_period_days']);
+        if (isset($data["billing_period_days"])) {
+            $updateData["billing_period_days"] = max(
+                1,
+                (int) $data["billing_period_days"],
+            );
         }
-        if (array_key_exists('tax_rate_percent', $data)) {
-            $updateData['tax_rate_percent'] = (float) $data['tax_rate_percent'];
+        if (array_key_exists("tax_rate_percent", $data)) {
+            $updateData["tax_rate_percent"] = (float) $data["tax_rate_percent"];
         }
-        if (array_key_exists('extra_charge_percent', $data)) {
-            $updateData['extra_charge_percent'] = (float) $data['extra_charge_percent'];
+        if (array_key_exists("extra_charge_percent", $data)) {
+            $updateData["extra_charge_percent"] =
+                (float) $data["extra_charge_percent"];
         }
-        if (array_key_exists('extra_charge_name', $data)) {
-            $updateData['extra_charge_name'] = $data['extra_charge_name'] !== null ? trim((string) $data['extra_charge_name']) : null;
+        if (array_key_exists("extra_charge_name", $data)) {
+            $updateData["extra_charge_name"] =
+                $data["extra_charge_name"] !== null
+                    ? trim((string) $data["extra_charge_name"])
+                    : null;
         }
-        if (isset($data['is_active'])) {
-            $updateData['is_active'] = (int) filter_var($data['is_active'], FILTER_VALIDATE_BOOLEAN);
+        if (isset($data["is_active"])) {
+            $updateData["is_active"] = (int) filter_var(
+                $data["is_active"],
+                FILTER_VALIDATE_BOOLEAN,
+            );
         }
-        if (array_key_exists('server_config', $data)) {
-            $updateData['server_config'] = $data['server_config'];
+        if (array_key_exists("server_config", $data)) {
+            $updateData["server_config"] = $data["server_config"];
         }
-        if (array_key_exists('max_subscriptions', $data)) {
-            $updateData['max_subscriptions'] = ($data['max_subscriptions'] !== null && $data['max_subscriptions'] !== '') ? max(1, (int) $data['max_subscriptions']) : null;
+        if (array_key_exists("max_subscriptions", $data)) {
+            $updateData["max_subscriptions"] =
+                $data["max_subscriptions"] !== null &&
+                $data["max_subscriptions"] !== ""
+                    ? max(1, (int) $data["max_subscriptions"])
+                    : null;
         }
         // Multi-node support: normalize node_ids
-        if (array_key_exists('node_ids', $data) && is_array($data['node_ids'])) {
-            $updateData['node_ids'] = array_map('intval', $data['node_ids']);
-        } elseif (array_key_exists('node_id', $data) && $data['node_id']) {
-            $updateData['node_ids'] = [(int) $data['node_id']];
+        if (
+            array_key_exists("node_ids", $data) &&
+            is_array($data["node_ids"])
+        ) {
+            $updateData["node_ids"] = array_map("intval", $data["node_ids"]);
+        } elseif (array_key_exists("node_id", $data) && $data["node_id"]) {
+            $updateData["node_ids"] = [(int) $data["node_id"]];
         }
-        if (array_key_exists('node_id', $data)) {
-            $updateData['node_id'] = $data['node_id'] ? (int) $data['node_id'] : null;
+        if (array_key_exists("node_id", $data)) {
+            $updateData["node_id"] = $data["node_id"]
+                ? (int) $data["node_id"]
+                : null;
         }
-        if (array_key_exists('realms_id', $data)) {
-            $updateData['realms_id'] = $data['realms_id'] ? (int) $data['realms_id'] : null;
+        if (array_key_exists("realms_id", $data)) {
+            $updateData["realms_id"] = $data["realms_id"]
+                ? (int) $data["realms_id"]
+                : null;
         }
-        if (array_key_exists('user_can_choose_realm', $data)) {
-            $updateData['user_can_choose_realm'] = !empty($data['user_can_choose_realm']);
+        if (array_key_exists("user_can_choose_realm", $data)) {
+            $updateData["user_can_choose_realm"] = !empty(
+                $data["user_can_choose_realm"]
+            );
         }
-        if (array_key_exists('allowed_realms', $data)) {
-            $updateData['allowed_realms'] = $data['allowed_realms'];
+        if (array_key_exists("allowed_realms", $data)) {
+            $updateData["allowed_realms"] = $data["allowed_realms"];
         }
-        if (array_key_exists('spell_id', $data)) {
-            $updateData['spell_id'] = $data['spell_id'] ? (int) $data['spell_id'] : null;
+        if (array_key_exists("spell_id", $data)) {
+            $updateData["spell_id"] = $data["spell_id"]
+                ? (int) $data["spell_id"]
+                : null;
         }
-        if (array_key_exists('user_can_choose_spell', $data)) {
-            $updateData['user_can_choose_spell'] = !empty($data['user_can_choose_spell']);
+        if (array_key_exists("user_can_choose_spell", $data)) {
+            $updateData["user_can_choose_spell"] = !empty(
+                $data["user_can_choose_spell"]
+            );
         }
-        if (array_key_exists('allowed_spells', $data)) {
-            $updateData['allowed_spells'] = $data['allowed_spells'];
+        if (array_key_exists("allowed_spells", $data)) {
+            $updateData["allowed_spells"] = $data["allowed_spells"];
         }
-        if (array_key_exists('allowed_upgrade_plan_ids', $data)) {
-            $updateData['allowed_upgrade_plan_ids'] = $data['allowed_upgrade_plan_ids'];
+        if (array_key_exists("allowed_upgrade_plan_ids", $data)) {
+            $updateData["allowed_upgrade_plan_ids"] =
+                $data["allowed_upgrade_plan_ids"];
         }
-        if (array_key_exists('allowed_downgrade_plan_ids', $data)) {
-            $updateData['allowed_downgrade_plan_ids'] = $data['allowed_downgrade_plan_ids'];
+        if (array_key_exists("allowed_downgrade_plan_ids", $data)) {
+            $updateData["allowed_downgrade_plan_ids"] =
+                $data["allowed_downgrade_plan_ids"];
         }
-        foreach (['memory', 'cpu', 'disk', 'swap', 'io', 'backup_limit', 'database_limit'] as $intField) {
+        foreach (
+            [
+                "memory",
+                "cpu",
+                "disk",
+                "swap",
+                "io",
+                "backup_limit",
+                "database_limit",
+            ]
+            as $intField
+        ) {
             if (isset($data[$intField])) {
                 $updateData[$intField] = max(0, (int) $data[$intField]);
             }
         }
-        if (array_key_exists('allocation_limit', $data)) {
-            $updateData['allocation_limit'] = ($data['allocation_limit'] !== null && $data['allocation_limit'] !== '') ? (int) $data['allocation_limit'] : null;
+        if (array_key_exists("allocation_limit", $data)) {
+            $updateData["allocation_limit"] =
+                $data["allocation_limit"] !== null &&
+                $data["allocation_limit"] !== ""
+                    ? (int) $data["allocation_limit"]
+                    : null;
         }
-        if (array_key_exists('startup_override', $data)) {
-            $updateData['startup_override'] = ($data['startup_override'] !== null && $data['startup_override'] !== '') ? trim($data['startup_override']) : null;
+        if (array_key_exists("startup_override", $data)) {
+            $updateData["startup_override"] =
+                $data["startup_override"] !== null &&
+                $data["startup_override"] !== ""
+                    ? trim($data["startup_override"])
+                    : null;
         }
-        if (array_key_exists('image_override', $data)) {
-            $updateData['image_override'] = ($data['image_override'] !== null && $data['image_override'] !== '') ? trim($data['image_override']) : null;
+        if (array_key_exists("image_override", $data)) {
+            $updateData["image_override"] =
+                $data["image_override"] !== null &&
+                $data["image_override"] !== ""
+                    ? trim($data["image_override"])
+                    : null;
         }
-        if (array_key_exists('card_background_image', $data)) {
-            $updateData['card_background_image'] = ($data['card_background_image'] !== null && $data['card_background_image'] !== '') ? trim($data['card_background_image']) : null;
+        if (array_key_exists("card_background_image", $data)) {
+            $updateData["card_background_image"] =
+                $data["card_background_image"] !== null &&
+                $data["card_background_image"] !== ""
+                    ? trim($data["card_background_image"])
+                    : null;
         }
 
         if (!Plan::update($planId, $updateData)) {
-            return ApiResponse::error('Failed to update plan', 'UPDATE_PLAN_FAILED', 500);
+            return ApiResponse::error(
+                "Failed to update plan",
+                "UPDATE_PLAN_FAILED",
+                500,
+            );
         }
 
         $updated = Plan::getById($planId);
-        $updated['billing_period_label'] = Plan::getBillingPeriodLabel((int) $updated['billing_period_days']);
-        if (isset($updated['server_config']) && is_string($updated['server_config'])) {
-            $updated['server_config'] = json_decode($updated['server_config'], true);
+        $updated["billing_period_label"] = Plan::getBillingPeriodLabel(
+            (int) $updated["billing_period_days"],
+        );
+        if (
+            isset($updated["server_config"]) &&
+            is_string($updated["server_config"])
+        ) {
+            $updated["server_config"] = json_decode(
+                $updated["server_config"],
+                true,
+            );
         }
 
         Activity::createActivity([
-            'user_uuid' => $admin['uuid'] ?? null,
-            'name' => 'billingplans_update_plan',
-            'context' => "Updated billing plan: {$updated['name']} (ID: {$planId})",
-            'ip_address' => CloudFlareRealIP::getRealIP(),
+            "user_uuid" => $admin["uuid"] ?? null,
+            "name" => "billingplans_update_plan",
+            "context" => "Updated billing plan: {$updated["name"]} (ID: {$planId})",
+            "ip_address" => CloudFlareRealIP::getRealIP(),
         ]);
 
-        return ApiResponse::success($updated, 'Plan updated successfully', 200);
+        return ApiResponse::success($updated, "Plan updated successfully", 200);
     }
 
     // #[OA\Delete(
@@ -393,24 +603,28 @@ class PlansController
     // )]
     public function delete(Request $request, int $planId): Response
     {
-        $admin = $request->get('user');
+        $admin = $request->get("user");
         $plan = Plan::getById($planId);
         if ($plan === null) {
-            return ApiResponse::error('Plan not found', 'PLAN_NOT_FOUND', 404);
+            return ApiResponse::error("Plan not found", "PLAN_NOT_FOUND", 404);
         }
 
         if (!Plan::delete($planId)) {
-            return ApiResponse::error('Failed to delete plan. Make sure there are no active subscriptions for this plan.', 'DELETE_PLAN_FAILED', 500);
+            return ApiResponse::error(
+                "Failed to delete plan. Make sure there are no active subscriptions for this plan.",
+                "DELETE_PLAN_FAILED",
+                500,
+            );
         }
 
         Activity::createActivity([
-            'user_uuid' => $admin['uuid'] ?? null,
-            'name' => 'billingplans_delete_plan',
-            'context' => "Deleted billing plan: {$plan['name']} (ID: {$planId})",
-            'ip_address' => CloudFlareRealIP::getRealIP(),
+            "user_uuid" => $admin["uuid"] ?? null,
+            "name" => "billingplans_delete_plan",
+            "context" => "Deleted billing plan: {$plan["name"]} (ID: {$planId})",
+            "ip_address" => CloudFlareRealIP::getRealIP(),
         ]);
 
-        return ApiResponse::success([], 'Plan deleted successfully', 200);
+        return ApiResponse::success([], "Plan deleted successfully", 200);
     }
 
     // #[OA\Get(
@@ -421,116 +635,176 @@ class PlansController
     // )]
     public function getOptions(Request $request): Response
     {
-        $nodes = array_map(fn ($n) => ['id' => $n['id'], 'name' => $n['name'], 'location_id' => $n['location_id'] ?? null], Node::getAllNodes() ?: []);
-        $plans = array_map(fn ($p) => ['id' => (int) $p['id'], 'name' => (string) $p['name']], Plan::getAll(false));
+        $nodes = array_map(
+            fn($n) => [
+                "id" => $n["id"],
+                "name" => $n["name"],
+                "location_id" => $n["location_id"] ?? null,
+            ],
+            Node::getAllNodes() ?: [],
+        );
+        $plans = array_map(
+            fn($p) => ["id" => (int) $p["id"], "name" => (string) $p["name"]],
+            Plan::getAll(false),
+        );
         $allRealms = Realm::getAll(null, 500, 0) ?: [];
-        $realms = array_map(fn ($r) => ['id' => $r['id'], 'name' => $r['name']], $allRealms);
+        $realms = array_map(
+            fn($r) => ["id" => $r["id"], "name" => $r["name"]],
+            $allRealms,
+        );
         $allSpells = Spell::getAllSpells() ?: [];
-        $spells = array_map(fn ($s) => [
-            'id' => $s['id'],
-            'name' => $s['name'],
-            'realm_id' => $s['realm_id'] ?? null,
-            'startup' => $s['startup'] ?? null,
-            'docker_image' => $s['docker_image'] ?? null,
-            'docker_images' => $s['docker_images'] ?? null,
-        ], $allSpells);
+        $spells = array_map(
+            fn($s) => [
+                "id" => $s["id"],
+                "name" => $s["name"],
+                "realm_id" => $s["realm_id"] ?? null,
+                "startup" => $s["startup"] ?? null,
+                "docker_image" => $s["docker_image"] ?? null,
+                "docker_images" => $s["docker_images"] ?? null,
+            ],
+            $allSpells,
+        );
 
         $allCategories = Category::getAll(false);
-        $categories = array_map(fn ($c) => [
-            'id' => (int) $c['id'],
-            'name' => $c['name'],
-            'icon' => $c['icon'],
-            'color' => $c['color'],
-            'is_active' => (bool) $c['is_active'],
-        ], $allCategories);
+        $categories = array_map(
+            fn($c) => [
+                "id" => (int) $c["id"],
+                "name" => $c["name"],
+                "icon" => $c["icon"],
+                "color" => $c["color"],
+                "is_active" => (bool) $c["is_active"],
+            ],
+            $allCategories,
+        );
 
-        return ApiResponse::success([
-            'nodes' => array_values($nodes),
-            'plans' => array_values($plans),
-            'realms' => array_values($realms),
-            'spells' => array_values($spells),
-            'categories' => array_values($categories),
-        ], 'Options retrieved successfully', 200);
+        return ApiResponse::success(
+            [
+                "nodes" => array_values($nodes),
+                "plans" => array_values($plans),
+                "realms" => array_values($realms),
+                "spells" => array_values($spells),
+                "categories" => array_values($categories),
+            ],
+            "Options retrieved successfully",
+            200,
+        );
     }
 
     public function listImages(Request $request): Response
     {
-        $page = max(1, (int) $request->query->get('page', 1));
-        $limit = min(100, max(1, (int) $request->query->get('limit', 100)));
-        $search = (string) $request->query->get('search', '');
+        $page = max(1, (int) $request->query->get("page", 1));
+        $limit = min(100, max(1, (int) $request->query->get("limit", 100)));
+        $search = (string) $request->query->get("search", "");
 
         $images = Image::searchImages(
             page: $page,
             limit: $limit,
             search: $search,
-            fields: ['id', 'name', 'url', 'created_at', 'updated_at'],
-            sortBy: 'created_at',
-            sortOrder: 'DESC'
+            fields: ["id", "name", "url", "created_at", "updated_at"],
+            sortBy: "created_at",
+            sortOrder: "DESC",
         );
 
         $total = Image::getCount($search);
         $totalPages = (int) ceil($total / max(1, $limit));
 
-        return ApiResponse::success([
-            'images' => $images,
-            'pagination' => [
-                'current_page' => $page,
-                'per_page' => $limit,
-                'total_records' => $total,
-                'total_pages' => $totalPages,
+        return ApiResponse::success(
+            [
+                "images" => $images,
+                "pagination" => [
+                    "current_page" => $page,
+                    "per_page" => $limit,
+                    "total_records" => $total,
+                    "total_pages" => $totalPages,
+                ],
             ],
-        ], 'Images retrieved successfully', 200);
+            "Images retrieved successfully",
+            200,
+        );
     }
 
     public function uploadImage(Request $request): Response
     {
-        if (!$request->files->has('image')) {
-            return ApiResponse::error('No image file provided', 'NO_FILE_PROVIDED', 400);
+        if (!$request->files->has("image")) {
+            return ApiResponse::error(
+                "No image file provided",
+                "NO_FILE_PROVIDED",
+                400,
+            );
         }
 
-        $file = $request->files->get('image');
-        $name = trim((string) $request->request->get('name', ''));
-        if ($name === '') {
-            return ApiResponse::error('Image name is required', 'MISSING_NAME', 400);
+        $file = $request->files->get("image");
+        $name = trim((string) $request->request->get("name", ""));
+        if ($name === "") {
+            return ApiResponse::error(
+                "Image name is required",
+                "MISSING_NAME",
+                400,
+            );
         }
         if (!$file->isValid()) {
-            return ApiResponse::error('Invalid file upload', 'INVALID_FILE', 400);
+            return ApiResponse::error(
+                "Invalid file upload",
+                "INVALID_FILE",
+                400,
+            );
         }
         if ($file->getSize() > 10 * 1024 * 1024) {
-            return ApiResponse::error('File size too large. Maximum size is 10MB', 'FILE_TOO_LARGE', 400);
+            return ApiResponse::error(
+                "File size too large. Maximum size is 10MB",
+                "FILE_TOO_LARGE",
+                400,
+            );
         }
 
-        $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        $allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
         if (!in_array((string) $file->getMimeType(), $allowedTypes, true)) {
-            return ApiResponse::error('Invalid file type. Allowed types: JPG, PNG, GIF, WebP', 'INVALID_FILE_TYPE', 400);
+            return ApiResponse::error(
+                "Invalid file type. Allowed types: JPG, PNG, GIF, WebP",
+                "INVALID_FILE_TYPE",
+                400,
+            );
         }
 
         $existing = Image::getByName($name);
         if ($existing) {
-            return ApiResponse::error('Image name already exists', 'IMAGE_NAME_EXISTS', 409);
+            return ApiResponse::error(
+                "Image name already exists",
+                "IMAGE_NAME_EXISTS",
+                409,
+            );
         }
 
-        $attachmentsDir = APP_PUBLIC . '/attachments/';
+        $attachmentsDir = APP_PUBLIC . "/attachments/";
         if (!is_dir($attachmentsDir)) {
             mkdir($attachmentsDir, 0755, true);
         }
 
         $extension = $file->guessExtension();
-        $filename = uniqid() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '_', $name) . '.' . $extension;
+        $filename =
+            uniqid() .
+            "_" .
+            preg_replace("/[^a-zA-Z0-9._-]/", "_", $name) .
+            "." .
+            $extension;
         $filePath = $attachmentsDir . $filename;
 
         try {
             $file->move($attachmentsDir, $filename);
         } catch (\Throwable $e) {
-            return ApiResponse::error('Failed to save file', 'SAVE_FAILED', 500);
+            return ApiResponse::error(
+                "Failed to save file",
+                "SAVE_FAILED",
+                500,
+            );
         }
 
-        $url = '/attachments/' . $filename;
+        $url = "/attachments/" . $filename;
         $imageId = Image::create([
-            'name' => $name,
-            'url' => $url,
-            'created_at' => date('Y-m-d H:i:s'),
-            'updated_at' => date('Y-m-d H:i:s'),
+            "name" => $name,
+            "url" => $url,
+            "created_at" => date("Y-m-d H:i:s"),
+            "updated_at" => date("Y-m-d H:i:s"),
         ]);
 
         if (!$imageId) {
@@ -538,14 +812,22 @@ class PlansController
                 unlink($filePath);
             }
 
-            return ApiResponse::error('Failed to create image record', 'FAILED_TO_CREATE_IMAGE', 500);
+            return ApiResponse::error(
+                "Failed to create image record",
+                "FAILED_TO_CREATE_IMAGE",
+                500,
+            );
         }
 
-        return ApiResponse::success([
-            'image_id' => (int) $imageId,
-            'url' => $url,
-            'filename' => $filename,
-        ], 'Image uploaded successfully', 201);
+        return ApiResponse::success(
+            [
+                "image_id" => (int) $imageId,
+                "url" => $url,
+                "filename" => $filename,
+            ],
+            "Image uploaded successfully",
+            201,
+        );
     }
 
     /** @param array<int,array<string,mixed>> $cache */
@@ -556,7 +838,14 @@ class PlansController
         }
         if (!array_key_exists($id, $cache)) {
             $cat = Category::getById($id);
-            $cache[$id] = $cat ? ['id' => (int) $cat['id'], 'name' => $cat['name'], 'icon' => $cat['icon'], 'color' => $cat['color']] : null;
+            $cache[$id] = $cat
+                ? [
+                    "id" => (int) $cat["id"],
+                    "name" => $cat["name"],
+                    "icon" => $cat["icon"],
+                    "color" => $cat["color"],
+                ]
+                : null;
         }
 
         return $cache[$id];

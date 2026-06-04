@@ -5,7 +5,12 @@ import type { AxiosError } from "axios";
 export interface Plan {
   id: number;
   category_id: number | null;
-  category?: { id: number; name: string; icon: string | null; color: string | null } | null;
+  category?: {
+    id: number;
+    name: string;
+    icon: string | null;
+    color: string | null;
+  } | null;
   name: string;
   description: string | null;
   long_description: string | null;
@@ -45,6 +50,17 @@ export interface Plan {
   card_background_image: string | null;
   allowed_upgrade_plan_ids: number[];
   allowed_downgrade_plan_ids: number[];
+  slider_config?: Record<
+    string,
+    {
+      enabled: boolean;
+      base: number;
+      max: number;
+      step: number;
+      cost_per_step: number;
+      rounding?: "nearest" | "up" | "down";
+    }
+  > | null;
 
   user_can_choose_realm: boolean;
   user_can_choose_spell: boolean;
@@ -86,6 +102,17 @@ export interface PlanFormData {
   startup_override: string | null;
   image_override: string | null;
   card_background_image: string | null;
+  slider_config?: Record<
+    string,
+    {
+      enabled: boolean;
+      base: number;
+      max: number;
+      step: number;
+      cost_per_step: number;
+      rounding?: "nearest" | "up" | "down";
+    }
+  > | null;
 
   user_can_choose_realm: boolean;
   user_can_choose_spell: boolean;
@@ -109,7 +136,13 @@ export interface PlanOptions {
   nodes: PlanOption[];
   realms: PlanOption[];
   spells: PlanOption[];
-  categories: Array<{ id: number; name: string; icon: string | null; color: string | null; is_active: boolean }>;
+  categories: Array<{
+    id: number;
+    name: string;
+    icon: string | null;
+    color: string | null;
+    is_active: boolean;
+  }>;
 }
 
 export function useAdminPlansAPI() {
@@ -118,7 +151,7 @@ export function useAdminPlansAPI() {
   const listPlans = async (
     page = 1,
     limit = 20,
-    search = ""
+    search = "",
   ): Promise<{ data: Plan[]; total: number; total_pages: number }> => {
     loading.value = true;
     try {
@@ -135,7 +168,7 @@ export function useAdminPlansAPI() {
       throw new Error(
         err.response?.data?.message ||
           err.response?.data?.error_message ||
-          "Failed to load plans"
+          "Failed to load plans",
       );
     } finally {
       loading.value = false;
@@ -162,9 +195,7 @@ export function useAdminPlansAPI() {
       return res.data.data;
     } catch (e) {
       const err = e as AxiosError<{ message?: string }>;
-      throw new Error(
-        err.response?.data?.message || "Failed to load options"
-      );
+      throw new Error(err.response?.data?.message || "Failed to load options");
     } finally {
       loading.value = false;
     }
@@ -185,13 +216,13 @@ export function useAdminPlansAPI() {
 
   const updatePlan = async (
     planId: number,
-    data: Partial<PlanFormData>
+    data: Partial<PlanFormData>,
   ): Promise<Plan> => {
     loading.value = true;
     try {
       const res = await axios.patch(
         `/api/admin/billingplans/plans/${planId}`,
-        data
+        data,
       );
       return res.data.data;
     } catch (e) {
@@ -254,7 +285,8 @@ export function useUserPlansAPI() {
       chosen_realm_id?: number | null;
       chosen_spell_id?: number | null;
       coupon_code?: string | null;
-    }
+      custom_resources?: Record<string, number>;
+    },
   ): Promise<{
     subscription: Record<string, unknown>;
     credits_deducted: number;
@@ -271,12 +303,16 @@ export function useUserPlansAPI() {
     try {
       const body: Record<string, unknown> = {};
       if (options?.server_name) body.server_name = options.server_name;
-      if (options?.chosen_realm_id) body.chosen_realm_id = options.chosen_realm_id;
-      if (options?.chosen_spell_id) body.chosen_spell_id = options.chosen_spell_id;
+      if (options?.chosen_realm_id)
+        body.chosen_realm_id = options.chosen_realm_id;
+      if (options?.chosen_spell_id)
+        body.chosen_spell_id = options.chosen_spell_id;
       if (options?.coupon_code) body.coupon_code = options.coupon_code;
+      if (options?.custom_resources)
+        body.custom_resources = options.custom_resources;
       const res = await axios.post(
         `/api/user/billingplans/plans/${planId}/subscribe`,
-        body
+        body,
       );
       return res.data.data;
     } catch (e) {

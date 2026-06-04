@@ -279,15 +279,113 @@ const closeSubscribeFlow = () => {
   chosenSpellId.value = null;
 };
 
+const emptyForm = () => {
+  serverName.value = "";
+  couponCode.value = "";
+  chosenRealmId.value = null;
+  chosenSpellId.value = null;
+  customResources.value = {};
+};
+
+const customResources = ref<Record<string, number>>({});
+
+const RESOURCES_LIST = [
+  { key: "memory", name: "RAM", unit: " MB", icon: MemoryStick, iconColor: "text-blue-400" },
+  { key: "cpu", name: "CPU", unit: "%", icon: Cpu, iconColor: "text-emerald-400" },
+  { key: "disk", name: "Disk Space", unit: " MB", icon: HardDrive, iconColor: "text-orange-400" },
+  { key: "database_limit", name: "Databases", unit: "", icon: Database, iconColor: "text-purple-400" },
+  { key: "backup_limit", name: "Backups", unit: "", icon: Shield, iconColor: "text-cyan-400" },
+  { key: "allocation_limit", name: "Allocations", unit: " ports", icon: Server, iconColor: "text-pink-400" },
+];
+
+const handleCustomResourceInput = (key: string, val: any) => {
+  if (!planToSubscribe.value) return;
+  const cfg = planToSubscribe.value.slider_config?.[key];
+  if (!cfg) return;
+
+  const baseVal = Number(cfg.base ?? 0);
+  const maxVal = Number(cfg.max ?? 0);
+  const stepVal = Number(cfg.step ?? 1);
+  const rounding = cfg.rounding ?? "nearest";
+
+  let num = Number(val);
+  if (isNaN(num)) num = baseVal;
+
+  num = Math.max(baseVal, Math.min(maxVal, num));
+
+  const diff = num - baseVal;
+  let steps = diff / stepVal;
+  if (rounding === "up") {
+    steps = Math.ceil(steps);
+  } else if (rounding === "down") {
+    steps = Math.floor(steps);
+  } else {
+    steps = Math.round(steps);
+  }
+
+  customResources.value[key] = baseVal + steps * stepVal;
+};
+
+const sliderAdditionalCredits = computed(() => {
+  let extra = 0;
+  if (!planToSubscribe.value) return 0;
+  const config = planToSubscribe.value.slider_config;
+  if (!config) return 0;
+  Object.entries(config).forEach(([key, cfg]) => {
+    if (cfg && cfg.enabled) {
+      const baseVal = Number(cfg.base ?? 0);
+      const maxVal = Number(cfg.max ?? 0);
+      const stepVal = Number(cfg.step ?? 1);
+      const costPerStep = Number(cfg.cost_per_step ?? 0);
+      const rounding = cfg.rounding ?? "nearest";
+
+      let selectedVal = customResources.value[key] !== undefined ? customResources.value[key] : baseVal;
+      selectedVal = Math.max(baseVal, Math.min(maxVal, selectedVal));
+
+      if (selectedVal > baseVal) {
+        const diff = selectedVal - baseVal;
+        let steps = diff / (stepVal || 1);
+        if (rounding === "up") {
+          steps = Math.ceil(steps);
+        } else if (rounding === "down") {
+          steps = Math.floor(steps);
+        } else {
+          steps = Math.round(steps);
+        }
+        extra += steps * costPerStep;
+      }
+    }
+  });
+  return extra;
+});
+
+const liveTotalCredits = computed(() => {
+  if (!planToSubscribe.value) return 0;
+  const basePrice = Number(planToSubscribe.value.price_credits ?? 0);
+  const subtotal = basePrice + sliderAdditionalCredits.value;
+  const taxRate = Number(planToSubscribe.value.tax_rate_percent ?? 0);
+  const extraRate = Number(planToSubscribe.value.extra_charge_percent ?? 0);
+
+  const taxCredits = Math.round(subtotal * (taxRate / 100));
+  const extraChargeCredits = Math.round(subtotal * (extraRate / 100));
+  return Math.max(0, subtotal + taxCredits + extraChargeCredits);
+});
+
 const startSubscribe = (plan: Plan) => {
   if (plan.is_sold_out) {
     toast.error("This plan is sold out.");
     return;
   }
-  if (!plan.can_afford) {
-    toast.error(`You need ${((plan.total_credits ?? plan.price_credits) - userCredits.value).toLocaleString()} more credits.`);
-    return;
+  // Initialize slider state
+  customResources.value = {};
+  if (plan.slider_config) {
+    Object.entries(plan.slider_config).forEach(([key, cfg]) => {
+      if (cfg && cfg.enabled) {
+        customResources.value[key] = cfg.base;
+      }
+    });
   }
+
   planToSubscribe.value = plan;
   serverName.value = plan.name;
   couponCode.value = "";
@@ -312,6 +410,7 @@ const executeSubscribe = async () => {
       chosen_realm_id: realmId,
       chosen_spell_id: spellId,
       coupon_code: couponCode.value.trim() || undefined,
+      custom_resources: Object.keys(customResources.value).length > 0 ? customResources.value : undefined,
     });
     userCredits.value = result.new_credits_balance;
     const paidNow = Number(result.credits_deducted ?? 0);
@@ -417,7 +516,7 @@ const pastSubscriptions = computed(() =>
   subscriptions.value.filter((s) => s.status === "cancelled" || s.status === "expired")
 );
 const balanceAfter = computed(() =>
-  planToSubscribe.value ? userCredits.value - (planToSubscribe.value.total_credits ?? planToSubscribe.value.price_credits) : 0
+  planToSubscribe.value ? userCredits.value - liveTotalCredits.value : 0
 );
 
 onMounted(async () => {
@@ -448,37 +547,68 @@ onMounted(async () => {
       </div>
 
       <div class="space-y-5">
+        <!-- Dynamic resource configuration panel -->
         <div v-if="planToSubscribe.has_server_template" class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
-          <div class="px-5 py-4 border-b border-border bg-muted/30">
-            <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Included resources</p>
+          <div class="px-5 py-4 border-b border-border bg-muted/30 flex items-center justify-between">
+            <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Configure Server Resources</p>
+            <span class="text-xs text-muted-foreground font-medium">Customize to match your needs</span>
           </div>
-          <div class="p-5">
-            <div class="flex flex-wrap gap-2">
-              <span class="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
-                <MemoryStick class="h-4 w-4 text-blue-400 shrink-0" />
-                <span class="font-semibold text-foreground">{{ fmtMB(planToSubscribe.memory) }}</span>
-                <span class="text-xs text-muted-foreground">RAM</span>
-              </span>
-              <span class="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
-                <Cpu class="h-4 w-4 text-emerald-400 shrink-0" />
-                <span class="font-semibold text-foreground">{{ planToSubscribe.cpu }}%</span>
-                <span class="text-xs text-muted-foreground">CPU</span>
-              </span>
-              <span class="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
-                <HardDrive class="h-4 w-4 text-orange-400 shrink-0" />
-                <span class="font-semibold text-foreground">{{ fmtMB(planToSubscribe.disk) }}</span>
-                <span class="text-xs text-muted-foreground">Disk</span>
-              </span>
-              <span v-if="planToSubscribe.backup_limit > 0" class="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
-                <Shield class="h-4 w-4 text-cyan-400 shrink-0" />
-                <span class="font-semibold text-foreground">{{ planToSubscribe.backup_limit }}</span>
-                <span class="text-xs text-muted-foreground">Backups</span>
-              </span>
-              <span v-if="planToSubscribe.database_limit > 0" class="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
-                <Database class="h-4 w-4 text-purple-400 shrink-0" />
-                <span class="font-semibold text-foreground">{{ planToSubscribe.database_limit }}</span>
-                <span class="text-xs text-muted-foreground">DBs</span>
-              </span>
+          <div class="p-5 space-y-5">
+            <div v-for="res in RESOURCES_LIST" :key="res.key" class="space-y-2">
+              <!-- If slider enabled for this resource -->
+              <div v-if="planToSubscribe.slider_config?.[res.key]?.enabled" class="space-y-2 border-b border-border/50 pb-4 last:border-0 last:pb-0">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <component :is="res.icon" :class="['h-4 w-4', res.iconColor]" />
+                    <span class="text-sm font-semibold text-foreground">{{ res.name }}</span>
+                    <span class="text-xs text-muted-foreground">(Base: {{ res.key === 'memory' || res.key === 'disk' ? fmtMB(planToSubscribe.slider_config[res.key].base) : planToSubscribe.slider_config[res.key].base + res.unit }})</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs font-semibold text-primary">
+                      {{ res.key === 'memory' || res.key === 'disk' ? fmtMB(customResources[res.key]) : customResources[res.key] + res.unit }}
+                    </span>
+                    <input
+                      type="number"
+                      :value="customResources[res.key]"
+                      @change="handleCustomResourceInput(res.key, ($event.target as HTMLInputElement).value)"
+                      class="w-20 h-7 text-xs text-center font-semibold border border-input rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                </div>
+
+                <div class="flex items-center gap-4">
+                  <input
+                    type="range"
+                    :min="planToSubscribe.slider_config[res.key].base"
+                    :max="planToSubscribe.slider_config[res.key].max"
+                    :step="planToSubscribe.slider_config[res.key].step"
+                    :value="customResources[res.key]"
+                    @input="handleCustomResourceInput(res.key, ($event.target as HTMLInputElement).value)"
+                    class="flex-1 h-1.5 rounded bg-muted appearance-none cursor-pointer accent-primary focus:outline-none"
+                  />
+                </div>
+
+                <!-- Pricing detail for this resource -->
+                <div class="flex justify-between items-center text-[11px] text-muted-foreground">
+                  <span>Range: {{ res.key === 'memory' || res.key === 'disk' ? fmtMB(planToSubscribe.slider_config[res.key].base) : planToSubscribe.slider_config[res.key].base }} - {{ res.key === 'memory' || res.key === 'disk' ? fmtMB(planToSubscribe.slider_config[res.key].max) : planToSubscribe.slider_config[res.key].max }}</span>
+                  <span v-if="customResources[res.key] > planToSubscribe.slider_config[res.key].base" class="text-amber-500 font-medium">
+                    +{{ (Math.round((customResources[res.key] - planToSubscribe.slider_config[res.key].base) / planToSubscribe.slider_config[res.key].step) * planToSubscribe.slider_config[res.key].cost_per_step).toLocaleString() }} credits
+                  </span>
+                  <span v-else class="text-emerald-500 font-medium">Included in base price</span>
+                </div>
+              </div>
+
+              <!-- If fixed mode (display as tag, no slider) -->
+              <div v-else class="flex items-center justify-between text-xs py-1.5 border-b border-border/20 last:border-0">
+                <div class="flex items-center gap-2">
+                  <component :is="res.icon" :class="['h-3.5 w-3.5', res.iconColor]" />
+                  <span class="text-muted-foreground">{{ res.name }}</span>
+                </div>
+                <span class="font-bold text-foreground">
+                  {{ res.key === 'memory' || res.key === 'disk' ? fmtMB(planToSubscribe[res.key]) : (planToSubscribe[res.key] != null ? planToSubscribe[res.key] : 'Unlimited') }}{{ res.unit }}
+                  <span class="text-[10px] text-muted-foreground font-normal ml-1">(Fixed)</span>
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -559,8 +689,8 @@ onMounted(async () => {
             </div>
             <div class="flex justify-between items-center px-5 py-3 gap-4 text-sm">
               <span class="text-muted-foreground">Due now</span>
-              <span class="text-base font-bold text-foreground tabular-nums">
-                {{ (planToSubscribe.total_credits ?? planToSubscribe.price_credits).toLocaleString() }} <span class="text-sm font-normal text-muted-foreground">credits</span>
+              <span class="text-base font-bold text-foreground tabular-nums text-primary">
+                {{ liveTotalCredits.toLocaleString() }} <span class="text-sm font-normal text-muted-foreground">credits</span>
               </span>
             </div>
             <div class="px-5 py-3 text-xs text-muted-foreground">
@@ -573,10 +703,11 @@ onMounted(async () => {
               />
               <p class="mt-1">Supports first-purchase and renewal coupons if configured by admins.</p>
             </div>
-            <div v-if="(planToSubscribe.tax_credits ?? 0) > 0 || (planToSubscribe.extra_charge_credits ?? 0) > 0" class="px-5 py-3 text-xs text-muted-foreground">
-              Base {{ (planToSubscribe.base_credits ?? planToSubscribe.price_credits).toLocaleString() }} cr
-              <span v-if="(planToSubscribe.tax_credits ?? 0) > 0"> + Tax {{ (planToSubscribe.tax_credits ?? 0).toLocaleString() }} cr</span>
-              <span v-if="(planToSubscribe.extra_charge_credits ?? 0) > 0"> + {{ planToSubscribe.extra_charge_name || 'Additional charge' }} {{ (planToSubscribe.extra_charge_credits ?? 0).toLocaleString() }} cr</span>
+            <div class="px-5 py-3 text-xs text-muted-foreground space-y-1">
+              <div>Base plan price: {{ (planToSubscribe.price_credits).toLocaleString() }} credits</div>
+              <div v-if="sliderAdditionalCredits > 0" class="text-amber-500">Resource customizations: +{{ sliderAdditionalCredits.toLocaleString() }} credits</div>
+              <div v-if="planToSubscribe.tax_rate_percent > 0">Tax ({{ planToSubscribe.tax_rate_percent }}%): +{{ Math.round((planToSubscribe.price_credits + sliderAdditionalCredits) * (planToSubscribe.tax_rate_percent / 100)).toLocaleString() }} credits</div>
+              <div v-if="planToSubscribe.extra_charge_percent > 0">{{ planToSubscribe.extra_charge_name || 'Additional charge' }} ({{ planToSubscribe.extra_charge_percent }}%): +{{ Math.round((planToSubscribe.price_credits + sliderAdditionalCredits) * (planToSubscribe.extra_charge_percent / 100)).toLocaleString() }} credits</div>
             </div>
             <div class="flex justify-between items-center px-5 py-3 gap-4 text-sm bg-muted/20">
               <span class="text-muted-foreground">Balance after</span>
@@ -638,7 +769,7 @@ onMounted(async () => {
         </button>
       </div>
 
-      
+
       <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
         <div class="bg-card border border-border rounded-xl p-4 shadow-sm">
           <div class="flex items-center justify-between mb-2">
@@ -666,7 +797,7 @@ onMounted(async () => {
         </div>
       </div>
 
-      
+
       <div class="flex gap-1 mb-5 bg-muted/50 rounded-xl p-1 w-fit flex-wrap">
         <button
           type="button"
@@ -690,7 +821,7 @@ onMounted(async () => {
         </button>
       </div>
 
-      
+
       <div v-if="activeTab === 'browse'">
         <div class="flex items-center gap-3 mb-4 flex-wrap">
           <input
@@ -709,7 +840,7 @@ onMounted(async () => {
             <ChevronDown class="billing-select-icon" />
           </div>
         </div>
-        
+
         <div v-if="categories.length > 0" class="flex gap-2 mb-5 flex-wrap">
           <button
             @click="activeCategoryId = null"
@@ -749,9 +880,9 @@ onMounted(async () => {
               'opacity-60': plan.is_sold_out,
             }"
           >
-            
+
             <div class="p-5 flex-1">
-              
+
               <div v-if="plan.category" class="mb-2">
                 <span :class="['inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium', colorClasses(plan.category.color)]">
                   <img v-if="isImageIcon(plan.category.icon)" :src="normalizeAssetUrl(plan.category.icon || '')" :alt="plan.category.name" class="h-3.5 w-3.5 rounded object-cover" />
@@ -775,7 +906,7 @@ onMounted(async () => {
                 {{ plan.description }}
               </p>
 
-              
+
               <div class="bg-muted/40 rounded-lg p-4 mb-4 text-center">
                 <div class="flex items-baseline justify-center gap-1.5">
                   <span class="text-3xl font-bold text-foreground">{{ (plan.total_credits ?? plan.price_credits).toLocaleString() }}</span>
@@ -790,7 +921,7 @@ onMounted(async () => {
                 </div>
               </div>
 
-              
+
               <div v-if="plan.has_server_template" class="space-y-1.5 mb-3">
                 <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">What you get</p>
                 <div class="grid grid-cols-2 gap-1.5">
@@ -824,7 +955,7 @@ onMounted(async () => {
                   </div>
                 </div>
 
-                
+
                 <button @click="toggleExpand(plan.id)"
                   class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mt-1">
                   <ChevronDown v-if="expandedPlanId !== plan.id" class="h-3.5 w-3.5" />
@@ -832,7 +963,7 @@ onMounted(async () => {
                   {{ expandedPlanId === plan.id ? 'Less details' : 'More details' }}
                 </button>
 
-                
+
                 <div v-if="expandedPlanId === plan.id" class="grid grid-cols-2 gap-1.5 mt-1">
                   <div class="flex items-center gap-2 bg-muted/30 rounded-lg px-2.5 py-2">
                     <Shield class="h-3.5 w-3.5 text-cyan-400 shrink-0" />
@@ -853,20 +984,20 @@ onMounted(async () => {
                   </div>
                 </div>
 
-                
+
                 <div v-if="expandedPlanId === plan.id && plan.long_description"
                   class="mt-2 text-xs text-muted-foreground bg-muted/20 rounded-lg p-3 leading-relaxed whitespace-pre-line">
                   {{ plan.long_description }}
                 </div>
               </div>
 
-              
+
               <div v-else class="flex items-center gap-2 bg-muted/20 rounded-lg px-3 py-2 mb-3">
                 <Server class="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                 <p class="text-xs text-muted-foreground">Subscription only — no server auto-provisioned</p>
               </div>
 
-              
+
               <div v-if="!plan.can_afford && !plan.is_sold_out"
                 class="flex items-center gap-2 text-xs text-amber-500 bg-amber-500/10 rounded-lg px-3 py-2 mb-3">
                 <AlertTriangle class="h-3.5 w-3.5 shrink-0" />
@@ -874,7 +1005,7 @@ onMounted(async () => {
               </div>
             </div>
 
-            
+
             <div class="px-5 pb-5">
               <div class="flex items-center gap-2">
                 <button
@@ -904,7 +1035,7 @@ onMounted(async () => {
         </div>
       </div>
 
-      
+
       <div v-if="activeTab === 'my-subscriptions'">
         <div v-if="subsLoading" class="flex justify-center py-20">
           <Loader2 class="h-8 w-8 animate-spin text-muted-foreground" />
@@ -921,7 +1052,7 @@ onMounted(async () => {
 
         <div v-else class="space-y-6">
 
-          
+
           <div v-if="activeSubscriptions.length > 0">
             <h2 class="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Active Subscriptions</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -954,7 +1085,7 @@ onMounted(async () => {
                     </div>
                   </div>
 
-                  
+
                   <div v-if="sub.server_uuid" class="flex items-center gap-2 bg-muted/20 rounded-lg px-3 py-2 mb-3">
                     <Server class="h-3.5 w-3.5 text-primary shrink-0" />
                     <div class="min-w-0">
@@ -975,7 +1106,7 @@ onMounted(async () => {
                     </span>
                   </div>
 
-                  
+
                   <div v-if="sub.status === 'suspended'"
                     class="flex items-start gap-2 text-xs text-amber-500 bg-amber-500/10 rounded-lg px-3 py-2 mb-3">
                     <PauseCircle class="h-3.5 w-3.5 shrink-0 mt-0.5" />
@@ -1001,7 +1132,7 @@ onMounted(async () => {
             </div>
           </div>
 
-          
+
           <div v-if="pastSubscriptions.length > 0">
             <h2 class="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Past Subscriptions</h2>
             <div class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
@@ -1045,7 +1176,7 @@ onMounted(async () => {
 
     </div>
 
-    
+
     <Teleport to="body">
       <div v-if="showCancelConfirm && subToCancel" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showCancelConfirm = false">
         <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-sm">
