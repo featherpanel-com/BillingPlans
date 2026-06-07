@@ -121,10 +121,28 @@ const emptyForm = (): PlanEditorForm => ({
   card_background_image: null,
   allowed_upgrade_plan_ids: [],
   allowed_downgrade_plan_ids: [],
+  slider_config: null,
   user_can_choose_realm: false, allowed_realms: [],
   user_can_choose_spell: false, allowed_spells: [],
 });
 const planForm = ref<PlanEditorForm>(emptyForm());
+
+const ensureSliderConfig = (key: string) => {
+  if (!planForm.value.slider_config) {
+    planForm.value.slider_config = {};
+  }
+  if (!planForm.value.slider_config[key]) {
+    planForm.value.slider_config[key] = {
+      enabled: false,
+      base: key === 'memory' ? 512 : (key === 'disk' ? 1024 : (key === 'cpu' ? 100 : 0)),
+      max: key === 'memory' ? 16384 : (key === 'disk' ? 51200 : (key === 'cpu' ? 400 : 10)),
+      step: key === 'memory' ? 512 : (key === 'disk' ? 1024 : (key === 'cpu' ? 50 : 1)),
+      cost_per_step: 0,
+      rounding: 'nearest'
+    };
+  }
+  return planForm.value.slider_config[key];
+};
 
 function toggleNodeSelection(nodeId: number) {
   if (planForm.value.node_ids.includes(nodeId)) {
@@ -364,6 +382,7 @@ const openEdit = (plan: Plan) => {
     card_background_image: plan.card_background_image ?? null,
     allowed_upgrade_plan_ids: Array.isArray(plan.allowed_upgrade_plan_ids) ? plan.allowed_upgrade_plan_ids : [],
     allowed_downgrade_plan_ids: Array.isArray(plan.allowed_downgrade_plan_ids) ? plan.allowed_downgrade_plan_ids : [],
+    slider_config: plan.slider_config ? (typeof plan.slider_config === 'string' ? JSON.parse(plan.slider_config) : JSON.parse(JSON.stringify(plan.slider_config))) : null,
     user_can_choose_realm: plan.user_can_choose_realm ?? false,
     allowed_realms: Array.isArray(plan.allowed_realms) ? plan.allowed_realms : [],
     user_can_choose_spell: plan.user_can_choose_spell ?? false,
@@ -394,6 +413,13 @@ const onSpellChange = () => {
 const savePlan = async () => {
   try {
     const payload = { ...planForm.value };
+    if (payload.slider_config) {
+      Object.entries(payload.slider_config).forEach(([key, config]) => {
+        if (config && config.enabled) {
+          (payload as any)[key] = config.base;
+        }
+      });
+    }
     if (editingPlan.value) {
       await updatePlan(editingPlan.value.id, payload);
       toast.success("Plan updated!");
@@ -510,9 +536,9 @@ watch(
 <template>
   <div class="w-full h-full overflow-auto min-h-screen">
 
-    
+
     <div v-if="activeTab === 'plans' && currentView === 'editor'" class="container mx-auto max-w-4xl px-4 md:px-8 py-6">
-      
+
       <div class="flex items-center gap-3 mb-6">
         <button @click="cancelEditor" class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft class="h-4 w-4" />Back to Plans
@@ -523,7 +549,7 @@ watch(
 
       <form @submit.prevent="savePlan" class="space-y-5">
 
-        
+
         <div class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
           <div class="px-5 py-3 border-b border-border bg-muted/30">
             <h3 class="text-sm font-semibold text-foreground">Plan Details</h3>
@@ -535,7 +561,7 @@ watch(
                 class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
             </div>
 
-            
+
             <div class="md:col-span-2">
               <label class="block text-sm font-medium mb-1.5 flex items-center gap-1.5"><Tag class="h-3.5 w-3.5 text-muted-foreground" />Category</label>
               <div class="billing-select-wrap">
@@ -744,7 +770,7 @@ watch(
           </div>
         </div>
 
-        
+
         <div class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
           <div class="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
             <div>
@@ -825,12 +851,12 @@ watch(
               </div>
             </div>
 
-            
+
             <div class="border-t border-border pt-4 space-y-4">
               <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">User Choice & Access Control</p>
               <p class="text-xs text-muted-foreground -mt-2">Allow subscribers to pick their own realm/egg, or restrict which ones are available.</p>
 
-              
+
               <div class="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
                 <div class="flex items-center justify-between gap-3">
                   <div>
@@ -870,7 +896,7 @@ watch(
                 </template>
               </div>
 
-              
+
               <div class="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
                 <div class="flex items-center justify-between gap-3">
                   <div>
@@ -911,50 +937,357 @@ watch(
               </div>
             </div>
 
-            
+
             <template v-if="planForm.spell_id || planForm.user_can_choose_spell">
               <div class="border-t border-border pt-4">
                 <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Resources</p>
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <div>
-                    <label class="block text-xs text-muted-foreground mb-1 flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full bg-blue-400 mr-0.5"></span>RAM (MB)</label>
-                    <input v-model.number="planForm.memory" type="number" min="128" step="128"
-                      class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <!-- RAM Card -->
+                  <div class="col-span-2 md:col-span-4 border border-border rounded-lg p-3 space-y-3 bg-muted/5">
+                    <p class="text-xs font-semibold flex items-center gap-1.5 text-blue-500">
+                      <span class="inline-block w-2 h-2 rounded-full bg-blue-500"></span>
+                      RAM (Memory)
+                    </p>
+                    <div class="flex items-center gap-4 text-[11px]">
+                      <label class="flex items-center gap-1 cursor-pointer font-medium">
+                        <input type="radio" :value="false" v-model="ensureSliderConfig('memory').enabled" class="text-primary focus:ring-primary h-3 w-3" />
+                        Fixed Mode
+                      </label>
+                      <label class="flex items-center gap-1 cursor-pointer font-medium text-primary">
+                        <input type="radio" :value="true" v-model="ensureSliderConfig('memory').enabled" class="text-primary focus:ring-primary h-3 w-3" />
+                        Slider Mode
+                      </label>
+                    </div>
+                    <div v-if="!ensureSliderConfig('memory').enabled" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Fixed RAM (MB)</label>
+                        <input v-model.number="planForm.memory" type="number" min="128" step="128"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                    </div>
+                    <div v-else class="grid grid-cols-2 md:grid-cols-5 gap-3">
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Base (MB)</label>
+                        <input v-model.number="ensureSliderConfig('memory').base" type="number" min="128" step="128"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Maximum (MB)</label>
+                        <input v-model.number="ensureSliderConfig('memory').max" type="number" min="128" step="128"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Step (MB)</label>
+                        <input v-model.number="ensureSliderConfig('memory').step" type="number" min="1" step="1"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Cost Per Step</label>
+                        <input v-model.number="ensureSliderConfig('memory').cost_per_step" type="number" min="0" step="1"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Rounding</label>
+                        <select v-model="ensureSliderConfig('memory').rounding"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring">
+                          <option value="nearest">Nearest</option>
+                          <option value="up">Up</option>
+                          <option value="down">Down</option>
+                        </select>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <label class="block text-xs text-muted-foreground mb-1 flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full bg-green-400 mr-0.5"></span>CPU (%)</label>
-                    <input v-model.number="planForm.cpu" type="number" min="0" max="10000"
-                      class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+
+                  <!-- CPU Card -->
+                  <div class="col-span-2 md:col-span-4 border border-border rounded-lg p-3 space-y-3 bg-muted/5">
+                    <p class="text-xs font-semibold flex items-center gap-1.5 text-green-500">
+                      <span class="inline-block w-2 h-2 rounded-full bg-green-500"></span>
+                      CPU (percentage, e.g. 100% = 1 core)
+                    </p>
+                    <div class="flex items-center gap-4 text-[11px]">
+                      <label class="flex items-center gap-1 cursor-pointer font-medium">
+                        <input type="radio" :value="false" v-model="ensureSliderConfig('cpu').enabled" class="text-primary focus:ring-primary h-3 w-3" />
+                        Fixed Mode
+                      </label>
+                      <label class="flex items-center gap-1 cursor-pointer font-medium text-primary">
+                        <input type="radio" :value="true" v-model="ensureSliderConfig('cpu').enabled" class="text-primary focus:ring-primary h-3 w-3" />
+                        Slider Mode
+                      </label>
+                    </div>
+                    <div v-if="!ensureSliderConfig('cpu').enabled" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Fixed CPU (%)</label>
+                        <input v-model.number="planForm.cpu" type="number" min="0" max="10000"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                    </div>
+                    <div v-else class="grid grid-cols-2 md:grid-cols-5 gap-3">
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Base (%)</label>
+                        <input v-model.number="ensureSliderConfig('cpu').base" type="number" min="0" max="10000"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Maximum (%)</label>
+                        <input v-model.number="ensureSliderConfig('cpu').max" type="number" min="0" max="10000"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Step (%)</label>
+                        <input v-model.number="ensureSliderConfig('cpu').step" type="number" min="1" step="1"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Cost Per Step</label>
+                        <input v-model.number="ensureSliderConfig('cpu').cost_per_step" type="number" min="0" step="1"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Rounding</label>
+                        <select v-model="ensureSliderConfig('cpu').rounding"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring">
+                          <option value="nearest">Nearest</option>
+                          <option value="up">Up</option>
+                          <option value="down">Down</option>
+                        </select>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <label class="block text-xs text-muted-foreground mb-1 flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full bg-orange-400 mr-0.5"></span>Disk (MB)</label>
-                    <input v-model.number="planForm.disk" type="number" min="512" step="512"
-                      class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+
+                  <!-- Disk Card -->
+                  <div class="col-span-2 md:col-span-4 border border-border rounded-lg p-3 space-y-3 bg-muted/5">
+                    <p class="text-xs font-semibold flex items-center gap-1.5 text-orange-500">
+                      <span class="inline-block w-2 h-2 rounded-full bg-orange-500"></span>
+                      Disk Space (MB)
+                    </p>
+                    <div class="flex items-center gap-4 text-[11px]">
+                      <label class="flex items-center gap-1 cursor-pointer font-medium">
+                        <input type="radio" :value="false" v-model="ensureSliderConfig('disk').enabled" class="text-primary focus:ring-primary h-3 w-3" />
+                        Fixed Mode
+                      </label>
+                      <label class="flex items-center gap-1 cursor-pointer font-medium text-primary">
+                        <input type="radio" :value="true" v-model="ensureSliderConfig('disk').enabled" class="text-primary focus:ring-primary h-3 w-3" />
+                        Slider Mode
+                      </label>
+                    </div>
+                    <div v-if="!ensureSliderConfig('disk').enabled" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Fixed Disk (MB)</label>
+                        <input v-model.number="planForm.disk" type="number" min="512" step="512"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                    </div>
+                    <div v-else class="grid grid-cols-2 md:grid-cols-5 gap-3">
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Base (MB)</label>
+                        <input v-model.number="ensureSliderConfig('disk').base" type="number" min="512" step="512"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Maximum (MB)</label>
+                        <input v-model.number="ensureSliderConfig('disk').max" type="number" min="512" step="512"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Step (MB)</label>
+                        <input v-model.number="ensureSliderConfig('disk').step" type="number" min="1" step="1"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Cost Per Step</label>
+                        <input v-model.number="ensureSliderConfig('disk').cost_per_step" type="number" min="0" step="1"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Rounding</label>
+                        <select v-model="ensureSliderConfig('disk').rounding"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring">
+                          <option value="nearest">Nearest</option>
+                          <option value="up">Up</option>
+                          <option value="down">Down</option>
+                        </select>
+                      </div>
+                    </div>
                   </div>
+
+                  <!-- Databases Card -->
+                  <div class="col-span-2 md:col-span-4 border border-border rounded-lg p-3 space-y-3 bg-muted/5">
+                    <p class="text-xs font-semibold flex items-center gap-1.5 text-purple-500">
+                      <span class="inline-block w-2 h-2 rounded-full bg-purple-500"></span>
+                      Databases Limit
+                    </p>
+                    <div class="flex items-center gap-4 text-[11px]">
+                      <label class="flex items-center gap-1 cursor-pointer font-medium">
+                        <input type="radio" :value="false" v-model="ensureSliderConfig('database_limit').enabled" class="text-primary focus:ring-primary h-3 w-3" />
+                        Fixed Mode
+                      </label>
+                      <label class="flex items-center gap-1 cursor-pointer font-medium text-primary">
+                        <input type="radio" :value="true" v-model="ensureSliderConfig('database_limit').enabled" class="text-primary focus:ring-primary h-3 w-3" />
+                        Slider Mode
+                      </label>
+                    </div>
+                    <div v-if="!ensureSliderConfig('database_limit').enabled" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Fixed Databases</label>
+                        <input v-model.number="planForm.database_limit" type="number" min="0"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                    </div>
+                    <div v-else class="grid grid-cols-2 md:grid-cols-5 gap-3">
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Base</label>
+                        <input v-model.number="ensureSliderConfig('database_limit').base" type="number" min="0"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Maximum</label>
+                        <input v-model.number="ensureSliderConfig('database_limit').max" type="number" min="0"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Step</label>
+                        <input v-model.number="ensureSliderConfig('database_limit').step" type="number" min="1" step="1"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Cost Per Step</label>
+                        <input v-model.number="ensureSliderConfig('database_limit').cost_per_step" type="number" min="0" step="1"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Rounding</label>
+                        <select v-model="ensureSliderConfig('database_limit').rounding"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring">
+                          <option value="nearest">Nearest</option>
+                          <option value="up">Up</option>
+                          <option value="down">Down</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Backups Card -->
+                  <div class="col-span-2 md:col-span-4 border border-border rounded-lg p-3 space-y-3 bg-muted/5">
+                    <p class="text-xs font-semibold flex items-center gap-1.5 text-cyan-500">
+                      <span class="inline-block w-2 h-2 rounded-full bg-cyan-500"></span>
+                      Backups Limit
+                    </p>
+                    <div class="flex items-center gap-4 text-[11px]">
+                      <label class="flex items-center gap-1 cursor-pointer font-medium">
+                        <input type="radio" :value="false" v-model="ensureSliderConfig('backup_limit').enabled" class="text-primary focus:ring-primary h-3 w-3" />
+                        Fixed Mode
+                      </label>
+                      <label class="flex items-center gap-1 cursor-pointer font-medium text-primary">
+                        <input type="radio" :value="true" v-model="ensureSliderConfig('backup_limit').enabled" class="text-primary focus:ring-primary h-3 w-3" />
+                        Slider Mode
+                      </label>
+                    </div>
+                    <div v-if="!ensureSliderConfig('backup_limit').enabled" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Fixed Backups</label>
+                        <input v-model.number="planForm.backup_limit" type="number" min="0"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                    </div>
+                    <div v-else class="grid grid-cols-2 md:grid-cols-5 gap-3">
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Base</label>
+                        <input v-model.number="ensureSliderConfig('backup_limit').base" type="number" min="0"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Maximum</label>
+                        <input v-model.number="ensureSliderConfig('backup_limit').max" type="number" min="0"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Step</label>
+                        <input v-model.number="ensureSliderConfig('backup_limit').step" type="number" min="1" step="1"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Cost Per Step</label>
+                        <input v-model.number="ensureSliderConfig('backup_limit').cost_per_step" type="number" min="0" step="1"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Rounding</label>
+                        <select v-model="ensureSliderConfig('backup_limit').rounding"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring">
+                          <option value="nearest">Nearest</option>
+                          <option value="up">Up</option>
+                          <option value="down">Down</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Allocations Card -->
+                  <div class="col-span-2 md:col-span-4 border border-border rounded-lg p-3 space-y-3 bg-muted/5">
+                    <p class="text-xs font-semibold flex items-center gap-1.5 text-pink-500">
+                      <span class="inline-block w-2 h-2 rounded-full bg-pink-500"></span>
+                      Allocations (Ports)
+                    </p>
+                    <div class="flex items-center gap-4 text-[11px]">
+                      <label class="flex items-center gap-1 cursor-pointer font-medium">
+                        <input type="radio" :value="false" v-model="ensureSliderConfig('allocation_limit').enabled" class="text-primary focus:ring-primary h-3 w-3" />
+                        Fixed Mode
+                      </label>
+                      <label class="flex items-center gap-1 cursor-pointer font-medium text-primary">
+                        <input type="radio" :value="true" v-model="ensureSliderConfig('allocation_limit').enabled" class="text-primary focus:ring-primary h-3 w-3" />
+                        Slider Mode
+                      </label>
+                    </div>
+                    <div v-if="!ensureSliderConfig('allocation_limit').enabled" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Fixed Allocations</label>
+                        <input v-model.number="planForm.allocation_limit" type="number" min="0" placeholder="Unlimited"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                    </div>
+                    <div v-else class="grid grid-cols-2 md:grid-cols-5 gap-3">
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Base</label>
+                        <input v-model.number="ensureSliderConfig('allocation_limit').base" type="number" min="0"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Maximum</label>
+                        <input v-model.number="ensureSliderConfig('allocation_limit').max" type="number" min="0"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Step</label>
+                        <input v-model.number="ensureSliderConfig('allocation_limit').step" type="number" min="1" step="1"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Cost Per Step</label>
+                        <input v-model.number="ensureSliderConfig('allocation_limit').cost_per_step" type="number" min="0" step="1"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] text-muted-foreground mb-1">Rounding</label>
+                        <select v-model="ensureSliderConfig('allocation_limit').rounding"
+                          class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring">
+                          <option value="nearest">Nearest</option>
+                          <option value="up">Up</option>
+                          <option value="down">Down</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Swap & IO (Keep Fixed) -->
                   <div>
-                    <label class="block text-xs text-muted-foreground mb-1">Swap (MB)</label>
+                    <label class="block text-[11px] text-muted-foreground mb-1">Swap (MB)</label>
                     <input v-model.number="planForm.swap" type="number" min="0"
-                      class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                      class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
                   </div>
                   <div>
-                    <label class="block text-xs text-muted-foreground mb-1">Backups</label>
-                    <input v-model.number="planForm.backup_limit" type="number" min="0"
-                      class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-                  </div>
-                  <div>
-                    <label class="block text-xs text-muted-foreground mb-1">Databases</label>
-                    <input v-model.number="planForm.database_limit" type="number" min="0"
-                      class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-                  </div>
-                  <div>
-                    <label class="block text-xs text-muted-foreground mb-1">Allocations</label>
-                    <input v-model.number="planForm.allocation_limit" type="number" min="0" placeholder="Unlimited"
-                      class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-                  </div>
-                  <div>
-                    <label class="block text-xs text-muted-foreground mb-1">Block IO</label>
+                    <label class="block text-[11px] text-muted-foreground mb-1">Block IO</label>
                     <input v-model.number="planForm.io" type="number" min="10" max="1000"
-                      class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                      class="flex h-8 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
                   </div>
                 </div>
               </div>
@@ -976,7 +1309,7 @@ watch(
           </div>
         </div>
 
-        
+
         <div class="flex items-center justify-between">
           <button type="button" @click="cancelEditor" class="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">
             <ArrowLeft class="h-4 w-4" />Cancel
@@ -991,10 +1324,10 @@ watch(
       </form>
     </div>
 
-    
+
     <div v-else class="container mx-auto max-w-7xl px-4 md:px-8 py-6">
 
-      
+
       <div class="mb-6 flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 class="text-2xl font-bold tracking-tight flex items-center gap-2">
@@ -1012,7 +1345,7 @@ watch(
         </button>
       </div>
 
-      
+
       <div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-4 mb-6">
         <div class="bg-card border border-border rounded-xl p-4 shadow-sm">
           <div class="flex items-center justify-between mb-2">
@@ -1056,7 +1389,7 @@ watch(
         </div>
       </div>
 
-      
+
       <div class="flex gap-1 mb-5 bg-muted/50 rounded-xl p-1 w-fit flex-wrap">
         <button v-for="tab in [{ key: 'plans', label: 'Plans', icon: CreditCard }, { key: 'categories', label: 'Categories', icon: FolderOpen }, { key: 'subscriptions', label: 'Subscriptions', icon: BarChart3 }, { key: 'settings', label: 'Settings', icon: Settings }]"
           :key="tab.key" @click="activeTab = tab.key as Tab; currentView = 'list'"
@@ -1065,7 +1398,7 @@ watch(
         </button>
       </div>
 
-      
+
       <div v-if="activeTab === 'plans'">
         <div class="flex items-center gap-3 mb-4 flex-wrap">
           <input v-model="plansSearch" @input="plansPage = 1; loadPlans()" type="text" placeholder="Search plans..."
@@ -1168,7 +1501,7 @@ watch(
         </div>
       </div>
 
-      
+
       <div v-if="activeTab === 'categories'">
         <div class="flex items-center gap-3 mb-4 flex-wrap">
           <input v-model="catsSearch" @input="catsPage = 1; loadCategories()" type="text" placeholder="Search categories..."
@@ -1227,7 +1560,7 @@ watch(
           </div>
         </div>
 
-        
+
         <div v-if="catsTotalPages > 1" class="flex items-center justify-center gap-2 mt-6">
           <button @click="catsPage--; loadCategories()" :disabled="catsPage <= 1" class="px-3 py-1.5 rounded-lg border border-border text-sm disabled:opacity-40 hover:bg-muted transition-colors">Prev</button>
           <span class="text-sm text-muted-foreground">{{ catsPage }} / {{ catsTotalPages }}</span>
@@ -1235,7 +1568,7 @@ watch(
         </div>
       </div>
 
-      
+
       <div v-if="activeTab === 'subscriptions'">
         <div class="flex items-center gap-3 mb-4 flex-wrap">
           <input v-model="subsSearch" @input="subsPage = 1; loadSubscriptions()" type="text" placeholder="Search user, plan..."
@@ -1363,11 +1696,11 @@ watch(
         </div>
       </div>
 
-      
+
       <div v-if="activeTab === 'settings'">
         <div class="max-w-3xl space-y-6">
 
-          
+
           <div class="bg-card border border-border rounded-xl shadow-sm p-5">
             <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-4">Billing Lifecycle</p>
             <div class="flex items-center gap-1 flex-wrap text-xs font-mono">
@@ -1388,7 +1721,7 @@ watch(
             </p>
           </div>
 
-          
+
           <div class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
             <div class="flex items-center gap-3 px-5 py-3.5 border-b border-border bg-muted/30">
               <div class="rounded-md bg-amber-500/10 p-1.5"><ServerOff class="h-4 w-4 text-amber-500" /></div>
@@ -1421,7 +1754,7 @@ watch(
             </div>
           </div>
 
-          
+
           <div class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
             <div class="flex items-center gap-3 px-5 py-3.5 border-b border-border bg-muted/30">
               <div class="rounded-md bg-blue-500/10 p-1.5"><Clock class="h-4 w-4 text-blue-400" /></div>
@@ -1458,7 +1791,7 @@ watch(
             </div>
           </div>
 
-          
+
           <div class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
             <div class="flex items-center gap-3 px-5 py-3.5 border-b border-border bg-muted/30">
               <div class="rounded-md bg-purple-500/10 p-1.5"><ShieldAlert class="h-4 w-4 text-purple-400" /></div>
@@ -1529,7 +1862,7 @@ watch(
       </div>
     </div>
 
-    
+
     <Teleport to="body">
       <div v-if="showDeleteConfirm" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showDeleteConfirm = false">
         <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-sm">
@@ -1547,7 +1880,7 @@ watch(
       </div>
     </Teleport>
 
-    
+
     <Teleport to="body">
       <div v-if="showCancelSubConfirm" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showCancelSubConfirm = false">
         <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-sm">
@@ -1565,7 +1898,7 @@ watch(
       </div>
     </Teleport>
 
-    
+
     <Teleport to="body">
       <div v-if="showRefundSubConfirm" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showRefundSubConfirm = false">
         <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-sm">
@@ -1599,7 +1932,7 @@ watch(
       </div>
     </Teleport>
 
-    
+
     <Teleport to="body">
       <div v-if="showCatModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showCatModal = false">
         <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-md">
@@ -1609,7 +1942,7 @@ watch(
           </div>
           <div class="p-6 space-y-4">
 
-            
+
             <div class="flex gap-3">
               <div class="w-20 flex-shrink-0">
                 <label class="block text-xs font-medium text-muted-foreground mb-1.5">Icon (emoji or image URL)</label>
@@ -1623,14 +1956,14 @@ watch(
               </div>
             </div>
 
-            
+
             <div>
               <label class="block text-xs font-medium text-muted-foreground mb-1.5">Description</label>
               <input v-model="catForm.description" placeholder="Short description shown to users..."
                 class="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
             </div>
 
-            
+
             <div>
               <label class="block text-xs font-medium text-muted-foreground mb-2">Color</label>
               <div class="flex flex-wrap gap-2">
@@ -1642,7 +1975,7 @@ watch(
               </div>
             </div>
 
-            
+
             <div class="flex gap-3 items-end">
               <div class="w-28">
                 <label class="block text-xs font-medium text-muted-foreground mb-1.5">Sort Order</label>
@@ -1672,7 +2005,7 @@ watch(
       </div>
     </Teleport>
 
-    
+
     <Teleport to="body">
       <div v-if="showDeleteCatConfirm" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showDeleteCatConfirm = false">
         <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-sm">
