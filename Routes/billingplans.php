@@ -22,6 +22,7 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\RouteCollection;
 use App\Addons\billingplans\Controllers\User\PlansController as UserPlansController;
 use App\Addons\billingplans\Controllers\Admin\PlansController as AdminPlansController;
+use App\Addons\billingplans\Controllers\Admin\CouponsController as AdminCouponsController;
 use App\Addons\billingplans\Controllers\Admin\SettingsController as AdminSettingsController;
 use App\Addons\billingplans\Controllers\User\CategoriesController as UserCategoriesController;
 use App\Addons\billingplans\Controllers\Admin\CategoriesController as AdminCategoriesController;
@@ -76,6 +77,21 @@ return function (RouteCollection $routes): void {
             }
 
             return (new UserPlansController())->subscribe($request, $planId);
+        },
+        ['POST']
+    );
+
+    App::getInstance(true)->registerAuthRoute(
+        $routes,
+        'billingplans-user-plans-validate-coupon',
+        '/api/user/billingplans/plans/{planId}/validate-coupon',
+        function (Request $request, array $args) {
+            $planId = (int) ($args['planId'] ?? 0);
+            if (!$planId) {
+                return ApiResponse::error('Invalid plan ID', 'INVALID_ID', 400);
+            }
+
+            return (new UserPlansController())->validateCoupon($request, $planId);
         },
         ['POST']
     );
@@ -408,6 +424,76 @@ return function (RouteCollection $routes): void {
         },
         Permissions::ADMIN_USERS_EDIT,
         ['POST']
+    );
+
+    App::getInstance(true)->registerAdminRoute(
+        $routes,
+        'billingplans-admin-coupons-list',
+        '/api/admin/billingplans/coupons',
+        function (Request $request) {
+            return (new AdminCouponsController())->list($request);
+        },
+        Permissions::ADMIN_USERS_VIEW,
+        ['GET']
+    );
+
+    App::getInstance(true)->registerAdminRoute(
+        $routes,
+        'billingplans-admin-coupons-create',
+        '/api/admin/billingplans/coupons',
+        function (Request $request) {
+            return (new AdminCouponsController())->create($request);
+        },
+        Permissions::ADMIN_USERS_EDIT,
+        ['POST']
+    );
+
+    App::getInstance(true)->registerAdminRoute(
+        $routes,
+        'billingplans-admin-coupons-get',
+        '/api/admin/billingplans/coupons/{couponId}',
+        function (Request $request, array $args) {
+            $couponId = (int) ($args['couponId'] ?? 0);
+            if (!$couponId) {
+                return ApiResponse::error('Invalid coupon ID', 'INVALID_ID', 400);
+            }
+
+            return (new AdminCouponsController())->get($request, $couponId);
+        },
+        Permissions::ADMIN_USERS_VIEW,
+        ['GET']
+    );
+
+    App::getInstance(true)->registerAdminRoute(
+        $routes,
+        'billingplans-admin-coupons-update',
+        '/api/admin/billingplans/coupons/{couponId}',
+        function (Request $request, array $args) {
+            $couponId = (int) ($args['couponId'] ?? 0);
+            if (!$couponId) {
+                return ApiResponse::error('Invalid coupon ID', 'INVALID_ID', 400);
+            }
+
+            return (new AdminCouponsController())->update($request, $couponId);
+        },
+        Permissions::ADMIN_USERS_EDIT,
+        ['PATCH', 'PUT']
+    );
+
+    App::getInstance(true)->registerAdminRoute(
+        $routes,
+        'billingplans-admin-coupons-delete',
+        '/api/admin/billingplans/coupons/{couponId}',
+        function (Request $request, array $args) {
+            $couponId = (int) ($args['couponId'] ?? 0);
+            if (!$couponId) {
+                return ApiResponse::error('Invalid coupon ID', 'INVALID_ID', 400);
+            }
+
+            return (new AdminCouponsController())->delete($request, $couponId);
+        },
+        Permissions::ADMIN_USERS_EDIT,
+        ['DELETE']
     );
 
     App::getInstance(true)->registerAdminRoute(

@@ -12,7 +12,7 @@ import { useUserSubscriptionsAPI, type Subscription } from "@/composables/useSub
 import { useUserCategoriesAPI, type Category, colorClasses } from "@/composables/useCategoriesAPI";
 
 const toast = useToast();
-const { loading: plansLoading, listPlans, subscribeToPlan } = useUserPlansAPI();
+const { loading: plansLoading, listPlans, subscribeToPlan, validateCoupon } = useUserPlansAPI();
 const { loading: subsLoading, listSubscriptions, cancelSubscription, changeSubscriptionPlan } = useUserSubscriptionsAPI();
 const { listCategories } = useUserCategoriesAPI();
 
@@ -22,6 +22,7 @@ const activeTab = ref<Tab>("browse");
 const shellView = ref<ClientShellView>("main");
 const plans = ref<Plan[]>([]);
 const subscriptions = ref<Subscription[]>([]);
+const cancelAtPeriodEnd = ref(true);
 const categories = ref<Category[]>([]);
 const activeCategoryId = ref<number | null>(null);
 const activeLocationId = ref<number | null>(null);
@@ -32,6 +33,14 @@ const userCredits = ref(0);
 const planToSubscribe = ref<Plan | null>(null);
 const serverName = ref("");
 const couponCode = ref("");
+const couponPreview = ref<{
+  discount_credits: number;
+  charge_credits: number;
+  scope?: string;
+} | null>(null);
+const couponError = ref<string | null>(null);
+const validatingCoupon = ref(false);
+let couponValidateTimer: ReturnType<typeof setTimeout> | null = null;
 const chosenRealmId = ref<number | null>(null);
 const chosenSpellId = ref<number | null>(null);
 const subscribing = ref(false);
@@ -75,6 +84,7 @@ const loadData = async () => {
     plans.value = pr.data;
     userCredits.value = pr.user_credits;
     subscriptions.value = sr.data;
+    cancelAtPeriodEnd.value = sr.cancel_at_period_end;
     categories.value = cats;
   } catch (e) {
     toast.error(e instanceof Error ? e.message : "Failed to load data");
@@ -414,8 +424,41 @@ const liveTotalCredits = computed(() => {
 
   const taxCredits = Math.round(subtotal * (taxRate / 100));
   const extraChargeCredits = Math.round(subtotal * (extraRate / 100));
-  return Math.max(0, subtotal + taxCredits + extraChargeCredits);
+  const total = Math.max(0, subtotal + taxCredits + extraChargeCredits);
+  if (couponPreview.value) {
+    return Math.max(0, couponPreview.value.charge_credits);
+  }
+  return total;
 });
+
+const scheduleCouponValidation = () => {
+  couponPreview.value = null;
+  couponError.value = null;
+  if (couponValidateTimer) clearTimeout(couponValidateTimer);
+  const code = couponCode.value.trim();
+  if (!code || !planToSubscribe.value) return;
+  couponValidateTimer = setTimeout(async () => {
+    validatingCoupon.value = true;
+    try {
+      const result = await validateCoupon(
+        planToSubscribe.value!.id,
+        code,
+        Object.keys(customResources.value).length > 0 ? customResources.value : undefined,
+      );
+      couponPreview.value = {
+        discount_credits: result.discount_credits,
+        charge_credits: result.charge_credits,
+        scope: String(result.coupon?.scope ?? ""),
+      };
+      couponError.value = null;
+    } catch (e) {
+      couponPreview.value = null;
+      couponError.value = e instanceof Error ? e.message : "Invalid coupon";
+    } finally {
+      validatingCoupon.value = false;
+    }
+  }, 400);
+};
 
 const startSubscribe = (plan: Plan) => {
   if (plan.is_sold_out) {
@@ -436,6 +479,8 @@ const startSubscribe = (plan: Plan) => {
   planToSubscribe.value = plan;
   serverName.value = plan.name;
   couponCode.value = "";
+  couponPreview.value = null;
+  couponError.value = null;
   chosenRealmId.value = null;
   chosenSpellId.value = null;
   if (plan.user_can_choose_realm && plan.allowed_realms_options?.length === 1) {
@@ -483,7 +528,11 @@ const executeCancelSub = async () => {
   if (!subToCancel.value) return;
   try {
     await cancelSubscription(subToCancel.value.id);
-    toast.success("Subscription cancelled.");
+    toast.success(
+      cancelAtPeriodEnd.value
+        ? "Subscription will cancel at the end of your billing period."
+        : "Subscription cancelled."
+    );
     showCancelConfirm.value = false; subToCancel.value = null;
     await loadData();
   } catch (e) {
@@ -556,11 +605,23 @@ const toggleExpand = (planId: number) => {
   expandedPlanId.value = expandedPlanId.value === planId ? null : planId;
 };
 
+const isPendingCancellation = (sub: Subscription) =>
+  sub.pending_cancellation === true ||
+  (sub.status === "cancelled" && !!sub.next_renewal_at && new Date(sub.next_renewal_at) > new Date());
+
 const activeSubscriptions = computed(() =>
-  subscriptions.value.filter((s: Subscription) => s.status === "active" || s.status === "suspended")
+  subscriptions.value.filter(
+    (s: Subscription) =>
+      s.status === "active" ||
+      s.status === "suspended" ||
+      isPendingCancellation(s)
+  )
 );
 const pastSubscriptions = computed(() =>
-  subscriptions.value.filter((s: Subscription) => s.status === "cancelled" || s.status === "expired")
+  subscriptions.value.filter(
+    (s: Subscription) =>
+      (s.status === "cancelled" || s.status === "expired") && !isPendingCancellation(s)
+  )
 );
 const balanceAfter = computed(() =>
   planToSubscribe.value ? userCredits.value - liveTotalCredits.value : 0
@@ -570,6 +631,14 @@ onMounted(async () => {
   await loadData();
   openPlanFromUrl();
 });
+
+watch(
+  () => [customResources.value, sliderAdditionalCredits.value] as const,
+  () => {
+    if (couponCode.value.trim()) scheduleCouponValidation();
+  },
+  { deep: true },
+);
 </script>
 
 <template>
@@ -746,9 +815,17 @@ onMounted(async () => {
                 v-model="couponCode"
                 type="text"
                 placeholder="Enter coupon code"
+                @input="scheduleCouponValidation"
                 class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm uppercase placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               />
-              <p class="mt-1">Supports first-purchase and renewal coupons if configured by admins.</p>
+              <p v-if="validatingCoupon" class="mt-1 text-primary">Checking coupon…</p>
+              <p v-else-if="couponError" class="mt-1 text-red-400">{{ couponError }}</p>
+              <p v-else-if="couponPreview" class="mt-1 text-emerald-400">
+                Coupon applied: −{{ couponPreview.discount_credits.toLocaleString() }} credits
+                <span v-if="couponPreview.scope === 'renewal'"> (renewals only)</span>
+                <span v-else-if="couponPreview.scope === 'both'"> (first purchase + renewals)</span>
+              </p>
+              <p v-else class="mt-1">Enter a code created in Billing Plans → Coupons.</p>
             </div>
             <div class="px-5 py-3 text-xs text-muted-foreground space-y-1">
               <div>Base plan price: {{ (planToSubscribe.price_credits).toLocaleString() }} credits</div>
@@ -1123,8 +1200,8 @@ onMounted(async () => {
                       <h3 class="font-semibold text-foreground">{{ sub.plan_name }}</h3>
                       <p v-if="sub.plan_description" class="text-xs text-muted-foreground mt-0.5">{{ sub.plan_description }}</p>
                     </div>
-                    <span :class="['shrink-0 px-2 py-0.5 rounded-full text-xs font-medium border', sub.status === 'active' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/15 text-amber-400 border-amber-500/30']">
-                      {{ sub.status.charAt(0).toUpperCase() + sub.status.slice(1) }}
+                    <span :class="['shrink-0 px-2 py-0.5 rounded-full text-xs font-medium border', isPendingCancellation(sub) ? 'bg-orange-500/15 text-orange-400 border-orange-500/30' : sub.status === 'active' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/15 text-amber-400 border-amber-500/30']">
+                      {{ isPendingCancellation(sub) ? 'Cancelling' : sub.status.charAt(0).toUpperCase() + sub.status.slice(1) }}
                     </span>
                   </div>
 
@@ -1135,7 +1212,7 @@ onMounted(async () => {
                       <p class="text-[10px] text-muted-foreground">per {{ getPeriodLabel(sub.billing_period_days).toLowerCase() }}</p>
                     </div>
                     <div class="bg-muted/30 rounded-lg px-3 py-2">
-                      <p class="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">Next Renewal</p>
+                      <p class="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">{{ isPendingCancellation(sub) ? 'Active Until' : 'Next Renewal' }}</p>
                       <p class="text-xs font-semibold text-foreground">{{ daysUntil(sub.next_renewal_at) }}</p>
                       <p class="text-[10px] text-muted-foreground">{{ formatDate(sub.next_renewal_at) }}</p>
                     </div>
@@ -1163,21 +1240,27 @@ onMounted(async () => {
                   </div>
 
 
-                  <div v-if="sub.status === 'suspended'"
+                  <div v-if="isPendingCancellation(sub)"
+                    class="flex items-start gap-2 text-xs text-orange-500 bg-orange-500/10 rounded-lg px-3 py-2 mb-3">
+                    <Clock class="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    <span>Scheduled to cancel on {{ formatDate(sub.next_renewal_at) }}. Your server stays available until then, then enters the normal suspend/delete lifecycle.</span>
+                  </div>
+
+                  <div v-if="sub.status === 'suspended' && !isPendingCancellation(sub)"
                     class="flex items-start gap-2 text-xs text-amber-500 bg-amber-500/10 rounded-lg px-3 py-2 mb-3">
                     <PauseCircle class="h-3.5 w-3.5 shrink-0 mt-0.5" />
                     <span>Suspended — insufficient credits at renewal. Top up your balance and your server will be restored at the next billing cycle.</span>
                   </div>
 
                   <button
-                    v-if="sub.status === 'active'"
+                    v-if="sub.status === 'active' && !isPendingCancellation(sub)"
                     @click="confirmCancelSub(sub)"
                     class="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/15 transition-colors"
                   >
                     <XCircle class="h-3.5 w-3.5" />Cancel Subscription
                   </button>
                   <button
-                    v-if="sub.status === 'active' || sub.status === 'suspended'"
+                    v-if="(sub.status === 'active' || sub.status === 'suspended') && !isPendingCancellation(sub)"
                     @click="confirmChangePlan(sub)"
                     class="w-full mt-2 inline-flex items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 transition-colors"
                   >
@@ -1241,8 +1324,11 @@ onMounted(async () => {
             <p class="text-sm text-muted-foreground mb-5">
               Cancel your <strong class="text-foreground">{{ subToCancel.plan_name }}</strong> subscription?
               No refund will be issued.
-              <span v-if="subToCancel.server_uuid" class="block mt-2 text-amber-500">
-                Your server will be suspended when the subscription ends.
+              <span v-if="subToCancel.server_uuid && cancelAtPeriodEnd" class="block mt-2 text-amber-500">
+                Your server stays available until {{ formatDate(subToCancel.next_renewal_at) }}, then enters the normal suspend/delete lifecycle.
+              </span>
+              <span v-else-if="subToCancel.server_uuid" class="block mt-2 text-amber-500">
+                Your server will be suspended immediately.
               </span>
             </p>
             <div class="flex gap-3">

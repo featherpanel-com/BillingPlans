@@ -30,8 +30,9 @@ export interface Subscription {
   user_uuid?: string;
   server_id?: number | null;
   server_name?: string | null;
-    admin_credits_refunded_total?: number;
-    admin_refunded_at?: string | null;
+  admin_credits_refunded_total?: number;
+  admin_refunded_at?: string | null;
+  pending_cancellation?: boolean;
 }
 
 export interface ChangeSubscriptionPlanResult {
@@ -185,6 +186,7 @@ export function useUserSubscriptionsAPI() {
   const listSubscriptions = async (): Promise<{
     data: Subscription[];
     user_credits: number;
+    cancel_at_period_end: boolean;
   }> => {
     loading.value = true;
     try {
@@ -192,6 +194,7 @@ export function useUserSubscriptionsAPI() {
       return {
         data: res.data.data.data ?? [],
         user_credits: res.data.data.user_credits ?? 0,
+        cancel_at_period_end: res.data.data.cancel_at_period_end ?? true,
       };
     } catch (e) {
       const err = e as AxiosError<{ message?: string }>;

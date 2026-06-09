@@ -53,6 +53,7 @@ class SettingsController
                     new OA\Property(property: 'termination_days', type: 'integer', minimum: 0, description: 'Days after suspension before auto-cancel (0 = never)'),
                     new OA\Property(property: 'send_suspension_email', type: 'boolean', description: 'Email user on suspension'),
                     new OA\Property(property: 'allow_user_cancellation', type: 'boolean', description: 'Allow users to cancel subscriptions themselves'),
+                    new OA\Property(property: 'cancel_at_period_end', type: 'boolean', description: 'Keep server running until billing period ends when cancelled'),
                 ]
             )
         ),
@@ -100,6 +101,10 @@ class SettingsController
 
         if (isset($data['allow_user_cancellation'])) {
             SettingsHelper::setAllowUserCancellation((bool) filter_var($data['allow_user_cancellation'], FILTER_VALIDATE_BOOLEAN));
+        }
+
+        if (isset($data['cancel_at_period_end'])) {
+            SettingsHelper::setCancelAtPeriodEnd((bool) filter_var($data['cancel_at_period_end'], FILTER_VALIDATE_BOOLEAN));
         }
 
         if (isset($data['send_termination_email'])) {

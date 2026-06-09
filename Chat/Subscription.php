@@ -21,7 +21,7 @@ use App\Chat\Database;
 
 class Subscription
 {
-    private static string $table = "featherpanel_billingplans_subscriptions";
+    private static string $table = 'featherpanel_billingplans_subscriptions';
 
     public static function getById(int $id): ?array
     {
@@ -35,7 +35,7 @@ class Subscription
              LEFT JOIN featherpanel_billingplans_plans p ON s.plan_id = p.id
              WHERE s.id = :id LIMIT 1',
         );
-        $stmt->execute(["id" => $id]);
+        $stmt->execute(['id' => $id]);
 
         return $stmt->fetch(\PDO::FETCH_ASSOC) ?: null;
     }
@@ -55,16 +55,16 @@ class Subscription
     public static function getAllByServerUuid(string $serverUuid): array
     {
         $serverUuid = trim($serverUuid);
-        if ($serverUuid === "") {
+        if ($serverUuid === '') {
             return [];
         }
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            "SELECT * FROM " .
+            'SELECT * FROM ' .
                 self::$table .
-                " WHERE server_uuid = :uuid ORDER BY id ASC",
+                ' WHERE server_uuid = :uuid ORDER BY id ASC',
         );
-        $stmt->execute(["uuid" => $serverUuid]);
+        $stmt->execute(['uuid' => $serverUuid]);
         $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
 
         return array_values($rows);
@@ -78,8 +78,8 @@ class Subscription
     public static function getAdminRefundAggregateStats(): array
     {
         $defaults = [
-            "total_credits_refunded" => 0,
-            "subscriptions_with_refunds" => 0,
+            'total_credits_refunded' => 0,
+            'subscriptions_with_refunds' => 0,
         ];
         try {
             $pdo = Database::getPdoConnection();
@@ -97,10 +97,8 @@ class Subscription
             }
 
             return [
-                "total_credits_refunded" =>
-                    (int) $row["total_credits_refunded"],
-                "subscriptions_with_refunds" =>
-                    (int) $row["subscriptions_with_refunds"],
+                'total_credits_refunded' => (int) $row['total_credits_refunded'],
+                'subscriptions_with_refunds' => (int) $row['subscriptions_with_refunds'],
             ];
         } catch (\Throwable) {
             return $defaults;
@@ -120,7 +118,7 @@ class Subscription
              WHERE s.user_id = :user_id
              ORDER BY s.created_at DESC',
         );
-        $stmt->execute(["user_id" => $userId]);
+        $stmt->execute(['user_id' => $userId]);
 
         return $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
     }
@@ -138,7 +136,7 @@ class Subscription
              WHERE s.user_id = :user_id AND s.status IN (\'active\', \'suspended\')
              ORDER BY s.created_at DESC',
         );
-        $stmt->execute(["user_id" => $userId]);
+        $stmt->execute(['user_id' => $userId]);
 
         return $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
     }
@@ -171,26 +169,26 @@ class Subscription
     public static function getPaginated(
         int $page,
         int $limit,
-        string $status = "",
-        string $search = "",
+        string $status = '',
+        string $search = '',
     ): array {
         $pdo = Database::getPdoConnection();
         $offset = ($page - 1) * $limit;
-        $where = ["1=1"];
+        $where = ['1=1'];
         $params = [];
 
         if (!empty($status)) {
-            $where[] = "s.status = :status";
-            $params["status"] = $status;
+            $where[] = 's.status = :status';
+            $params['status'] = $status;
         }
 
         if (!empty($search)) {
             $where[] =
-                "(u.username LIKE :search OR u.email LIKE :search OR p.name LIKE :search)";
-            $params["search"] = "%" . $search . "%";
+                '(u.username LIKE :search OR u.email LIKE :search OR p.name LIKE :search)';
+            $params['search'] = '%' . $search . '%';
         }
 
-        $whereClause = "WHERE " . implode(" AND ", $where);
+        $whereClause = 'WHERE ' . implode(' AND ', $where);
 
         $countSql =
             'SELECT COUNT(*) as count
@@ -203,7 +201,7 @@ class Subscription
             $whereClause;
         $countStmt = $pdo->prepare($countSql);
         $countStmt->execute($params);
-        $total = (int) $countStmt->fetch(\PDO::FETCH_ASSOC)["count"];
+        $total = (int) $countStmt->fetch(\PDO::FETCH_ASSOC)['count'];
 
         $sql =
             'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name,
@@ -221,52 +219,69 @@ class Subscription
 
         $stmt = $pdo->prepare($sql);
         foreach ($params as $key => $value) {
-            $stmt->bindValue(":" . $key, $value);
+            $stmt->bindValue(':' . $key, $value);
         }
-        $stmt->bindValue(":limit", $limit, \PDO::PARAM_INT);
-        $stmt->bindValue(":offset", $offset, \PDO::PARAM_INT);
+        $stmt->bindValue(':limit', $limit, \PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset, \PDO::PARAM_INT);
         $stmt->execute();
         $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
 
-        return ["data" => $rows, "total" => $total];
+        return ['data' => $rows, 'total' => $total];
     }
 
     public static function create(array $data): ?int
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            "INSERT INTO " .
+            'INSERT INTO ' .
                 self::$table .
                 ' (user_id, plan_id, coupon_code_id, coupon_code, coupon_scope, renewal_discount_percent, renewal_discount_credits, server_uuid, status, next_renewal_at, custom_resources)
              VALUES (:user_id, :plan_id, :coupon_code_id, :coupon_code, :coupon_scope, :renewal_discount_percent, :renewal_discount_credits, :server_uuid, :status, :next_renewal_at, :custom_resources)',
         );
         $stmt->execute([
-            "user_id" => (int) $data["user_id"],
-            "plan_id" => (int) $data["plan_id"],
-            "coupon_code_id" => isset($data["coupon_code_id"])
-                ? (int) $data["coupon_code_id"]
+            'user_id' => (int) $data['user_id'],
+            'plan_id' => (int) $data['plan_id'],
+            'coupon_code_id' => isset($data['coupon_code_id'])
+                ? (int) $data['coupon_code_id']
                 : null,
-            "coupon_code" => $data["coupon_code"] ?? null,
-            "coupon_scope" => $data["coupon_scope"] ?? null,
-            "renewal_discount_percent" => isset(
-                $data["renewal_discount_percent"],
+            'coupon_code' => $data['coupon_code'] ?? null,
+            'coupon_scope' => $data['coupon_scope'] ?? null,
+            'renewal_discount_percent' => isset(
+                $data['renewal_discount_percent'],
             )
-                ? (float) $data["renewal_discount_percent"]
+                ? (float) $data['renewal_discount_percent']
                 : null,
-            "renewal_discount_credits" => isset(
-                $data["renewal_discount_credits"],
+            'renewal_discount_credits' => isset(
+                $data['renewal_discount_credits'],
             )
-                ? (int) $data["renewal_discount_credits"]
+                ? (int) $data['renewal_discount_credits']
                 : null,
-            "server_uuid" => $data["server_uuid"] ?? null,
-            "status" => $data["status"] ?? "active",
-            "next_renewal_at" => $data["next_renewal_at"] ?? null,
-            "custom_resources" => $data["custom_resources"] ?? null,
+            'server_uuid' => $data['server_uuid'] ?? null,
+            'status' => $data['status'] ?? 'active',
+            'next_renewal_at' => $data['next_renewal_at'] ?? null,
+            'custom_resources' => $data['custom_resources'] ?? null,
         ]);
 
         $insertId = (int) $pdo->lastInsertId();
 
         return $insertId > 0 ? $insertId : null;
+    }
+
+    /**
+     * Cancelled subscriptions still within their paid billing period (server kept running).
+     */
+    public static function isPendingCancellation(array $subscription): bool
+    {
+        if (($subscription['status'] ?? '') !== 'cancelled') {
+            return false;
+        }
+
+        $nextRenewal = $subscription['next_renewal_at'] ?? null;
+        if ($nextRenewal === null || $nextRenewal === '') {
+            return false;
+        }
+
+        return strtotime((string) $nextRenewal) > time();
     }
 
     /**
@@ -277,7 +292,7 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.billing_period_days
+            'SELECT s.*, p.name as plan_name, p.billing_period_days, p.price_credits, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.slider_config
              FROM ' .
                 self::$table .
                 ' s
@@ -285,6 +300,7 @@ class Subscription
              WHERE s.status = \'cancelled\'
                AND s.server_uuid IS NOT NULL
                AND s.server_uuid != \'\'
+               AND s.suspended_at IS NULL
                AND (s.next_renewal_at IS NULL OR s.next_renewal_at <= NOW())
              ORDER BY s.next_renewal_at ASC',
         );
@@ -308,7 +324,7 @@ class Subscription
              WHERE s.status = :status
              ORDER BY s.suspended_at ASC',
         );
-        $stmt->execute(["status" => $status]);
+        $stmt->execute(['status' => $status]);
 
         return $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
     }
@@ -317,23 +333,23 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $allowed = [
-            "status",
-            "plan_id",
-            "coupon_code_id",
-            "coupon_code",
-            "coupon_scope",
-            "renewal_discount_percent",
-            "renewal_discount_credits",
-            "server_uuid",
-            "next_renewal_at",
-            "suspended_at",
-            "grace_started_at",
-            "cancelled_at",
-            "server_suspend_sync",
-            "custom_resources",
+            'status',
+            'plan_id',
+            'coupon_code_id',
+            'coupon_code',
+            'coupon_scope',
+            'renewal_discount_percent',
+            'renewal_discount_credits',
+            'server_uuid',
+            'next_renewal_at',
+            'suspended_at',
+            'grace_started_at',
+            'cancelled_at',
+            'server_suspend_sync',
+            'custom_resources',
         ];
         $sets = [];
-        $params = ["id" => $id];
+        $params = ['id' => $id];
 
         foreach ($allowed as $field) {
             if (array_key_exists($field, $data)) {
@@ -347,11 +363,11 @@ class Subscription
         }
 
         $stmt = $pdo->prepare(
-            "UPDATE " .
+            'UPDATE ' .
                 self::$table .
-                " SET " .
-                implode(", ", $sets) .
-                " WHERE id = :id",
+                ' SET ' .
+                implode(', ', $sets) .
+                ' WHERE id = :id',
         );
 
         return $stmt->execute($params);
@@ -367,7 +383,7 @@ class Subscription
         }
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            "UPDATE " .
+            'UPDATE ' .
                 self::$table .
                 '
              SET admin_credits_refunded_total = admin_credits_refunded_total + :amount,
@@ -375,35 +391,61 @@ class Subscription
              WHERE id = :id',
         );
 
-        return $stmt->execute(["id" => $id, "amount" => $amount]) &&
-            $stmt->rowCount() > 0;
+        return $stmt->execute(['id' => $id, 'amount' => $amount])
+            && $stmt->rowCount() > 0;
     }
 
-    public static function cancel(int $id, int $userId): bool
+    public static function cancel(int $id, int $userId, bool $atPeriodEnd): bool
     {
-        $pdo = Database::getPdoConnection();
-        $stmt = $pdo->prepare(
-            "UPDATE " .
-                self::$table .
-                " SET status = 'cancelled', cancelled_at = NOW() WHERE id = :id AND user_id = :user_id AND status NOT IN ('cancelled','expired')",
-        );
+        return self::applyCancellation($id, $atPeriodEnd, $userId);
+    }
 
-        return $stmt->execute(["id" => $id, "user_id" => $userId]) &&
-            $stmt->rowCount() > 0;
+    /**
+     * Mark a subscription as cancelled. End-of-term keeps status cancelled until renewal date;
+     * immediate cancel moves straight to suspended for the termination lifecycle.
+     */
+    public static function applyCancellation(
+        int $id,
+        bool $atPeriodEnd,
+        ?int $userId = null,
+    ): bool {
+        $pdo = Database::getPdoConnection();
+        $userClause = $userId !== null ? ' AND user_id = :user_id' : '';
+        if ($atPeriodEnd) {
+            $sql =
+                'UPDATE ' .
+                self::$table .
+                " SET status = 'cancelled', cancelled_at = NOW()
+             WHERE id = :id{$userClause} AND status NOT IN ('cancelled','expired')";
+        } else {
+            $sql =
+                'UPDATE ' .
+                self::$table .
+                " SET status = 'suspended', cancelled_at = NOW(), suspended_at = NOW(), server_suspend_sync = 0
+             WHERE id = :id{$userClause} AND status NOT IN ('cancelled','expired')";
+        }
+
+        $stmt = $pdo->prepare($sql);
+        $params = ['id' => $id];
+        if ($userId !== null) {
+            $params['user_id'] = $userId;
+        }
+
+        return $stmt->execute($params) && $stmt->rowCount() > 0;
     }
 
     public static function countByStatus(): array
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->query(
-            "SELECT status, COUNT(*) as count FROM " .
+            'SELECT status, COUNT(*) as count FROM ' .
                 self::$table .
-                " GROUP BY status",
+                ' GROUP BY status',
         );
         $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
         $result = [];
         foreach ($rows as $row) {
-            $result[$row["status"]] = (int) $row["count"];
+            $result[$row['status']] = (int) $row['count'];
         }
 
         return $result;

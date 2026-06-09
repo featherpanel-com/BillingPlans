@@ -10,6 +10,7 @@ export interface BillingPlanSettings {
   send_suspension_email: boolean;
   send_termination_email: boolean;
   allow_user_cancellation: boolean;
+  cancel_at_period_end: boolean;
   generate_invoices: boolean;
 }
 

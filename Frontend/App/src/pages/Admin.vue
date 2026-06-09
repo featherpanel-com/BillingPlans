@@ -6,7 +6,7 @@ import {
   CheckCircle2, PauseCircle, XCircle, RefreshCw, Save, Settings,
   ShieldAlert, BarChart3, ToggleLeft, ToggleRight, ServerOff, Server, FileText,
   Mail, Clock, ChevronDown, ArrowLeft,
-  Package, Infinity, FolderOpen, Tag, ExternalLink, CircleDollarSign,
+  Package, Infinity, FolderOpen, Tag, ExternalLink, CircleDollarSign, Ticket,
 } from "lucide-vue-next";
 import {
   useAdminPlansAPI, type Plan, type PlanFormData, type PlanOptions,
@@ -24,6 +24,9 @@ import {
   useAdminCategoriesAPI, type Category, type CategoryFormData,
   CATEGORY_COLORS, colorClasses,
 } from "@/composables/useCategoriesAPI";
+import {
+  useAdminCouponsAPI, type PlanCoupon, type PlanCouponFormData,
+} from "@/composables/useCouponsAPI";
 
 const toast = useToast();
 const {
@@ -37,10 +40,14 @@ const { loading: imagesLoading, listImages, uploadImage } = useAdminImagesAPI();
 const {
   loading: catsLoading, listCategories, createCategory, updateCategory, deleteCategory,
 } = useAdminCategoriesAPI();
+const {
+  loading: couponsLoading, listCoupons, createCoupon, updateCoupon, deleteCoupon,
+} = useAdminCouponsAPI();
 
 
-type Tab = "plans" | "categories" | "subscriptions" | "settings";
+type Tab = "plans" | "categories" | "subscriptions" | "settings" | "coupons";
 type View = "list" | "editor";
+type CouponView = "list" | "editor";
 type PlanEditorForm = PlanFormData & {
   allowed_upgrade_plan_ids: number[];
   allowed_downgrade_plan_ids: number[];
@@ -48,7 +55,9 @@ type PlanEditorForm = PlanFormData & {
 
 const activeTab = ref<Tab>("plans");
 const currentView = ref<View>("list");
+const couponView = ref<CouponView>("list");
 const editingPlan = ref<Plan | null>(null);
+const editingCoupon = ref<PlanCoupon | null>(null);
 
 
 const categories = ref<Category[]>([]);
@@ -76,7 +85,7 @@ const settings = ref<BillingPlanSettings | null>(null);
 const settingsForm = ref<BillingPlanSettings>({
   suspend_servers: true, unsuspend_on_renewal: true, grace_period_days: 0,
   termination_days: 0, send_suspension_email: true, send_termination_email: true,
-  allow_user_cancellation: true, generate_invoices: true,
+  allow_user_cancellation: true, cancel_at_period_end: true, generate_invoices: true,
 });
 const planOptions = ref<PlanOptions>({ plans: [], nodes: [], realms: [], spells: [], categories: [] });
 
@@ -88,6 +97,24 @@ const subsPage = ref(1);
 const subsTotalPages = ref(1);
 const subsSearch = ref("");
 const subsStatusFilter = ref("");
+
+
+const coupons = ref<PlanCoupon[]>([]);
+const couponsPage = ref(1);
+const couponsTotalPages = ref(1);
+const couponsSearch = ref("");
+const emptyCouponForm = (): PlanCouponFormData => ({
+  code: "",
+  plan_id: null,
+  discount_percent: 0,
+  discount_credits: 0,
+  coupon_scope: "initial",
+  max_uses: 0,
+  expires_at: "",
+});
+const couponForm = ref<PlanCouponFormData>(emptyCouponForm());
+const showDeleteCouponConfirm = ref(false);
+const couponToDelete = ref<PlanCoupon | null>(null);
 
 
 const showDeleteConfirm = ref(false);
@@ -259,8 +286,17 @@ function statusBadgeClass(status: string) {
     cancelled: "bg-red-500/20 text-red-400 border border-red-500/30",
     expired: "bg-red-500/20 text-red-400 border border-red-500/30",
     pending: "bg-blue-500/20 text-blue-400 border border-blue-500/30",
+    cancelling: "bg-orange-500/20 text-orange-400 border border-orange-500/30",
   };
   return map[status] ?? "bg-muted text-muted-foreground border border-border";
+}
+
+function isPendingCancellation(sub: Subscription) {
+  return sub.pending_cancellation === true;
+}
+
+function subscriptionStatusLabel(sub: Subscription) {
+  return isPendingCancellation(sub) ? "Cancelling" : sub.status.charAt(0).toUpperCase() + sub.status.slice(1);
 }
 
 const loadPlans = async () => {
@@ -286,6 +322,87 @@ const loadCategories = async () => {
     const r = await listCategories(catsPage.value, 50, catsSearch.value);
     categories.value = r.data; catsTotalPages.value = r.total_pages;
   } catch (e) { toast.error(e instanceof Error ? e.message : "Failed to load categories"); }
+};
+const loadCoupons = async () => {
+  try {
+    const r = await listCoupons(couponsPage.value, 20, couponsSearch.value);
+    coupons.value = r.data;
+    couponsTotalPages.value = r.total_pages;
+  } catch (e) { toast.error(e instanceof Error ? e.message : "Failed to load coupons"); }
+};
+
+const openCreateCoupon = () => {
+  editingCoupon.value = null;
+  couponForm.value = emptyCouponForm();
+  couponView.value = "editor";
+};
+const openEditCoupon = (coupon: PlanCoupon) => {
+  editingCoupon.value = coupon;
+  couponForm.value = {
+    code: coupon.code,
+    plan_id: coupon.plan_id,
+    discount_percent: Number(coupon.discount_percent ?? 0),
+    discount_credits: Number(coupon.discount_credits ?? 0),
+    coupon_scope: (coupon.coupon_scope as PlanCouponFormData["coupon_scope"]) ?? "initial",
+    max_uses: Number(coupon.max_uses ?? 0),
+    expires_at: coupon.expires_at ? coupon.expires_at.split(" ")[0] || "" : "",
+  };
+  couponView.value = "editor";
+};
+const cancelCouponEditor = () => {
+  couponView.value = "list";
+  editingCoupon.value = null;
+  couponForm.value = emptyCouponForm();
+};
+const saveCoupon = async () => {
+  if (!couponForm.value.code.trim()) {
+    toast.error("Coupon code is required");
+    return;
+  }
+  if (couponForm.value.discount_percent <= 0 && couponForm.value.discount_credits <= 0) {
+    toast.error("Set a percent and/or fixed credit discount");
+    return;
+  }
+  try {
+    if (editingCoupon.value) {
+      await updateCoupon(editingCoupon.value.id, couponForm.value);
+      toast.success("Coupon updated!");
+    } else {
+      await createCoupon(couponForm.value);
+      toast.success("Coupon created!");
+    }
+    cancelCouponEditor();
+    await loadCoupons();
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : "Failed to save coupon");
+  }
+};
+const confirmDeleteCoupon = (coupon: PlanCoupon) => {
+  couponToDelete.value = coupon;
+  showDeleteCouponConfirm.value = true;
+};
+const executeDeleteCoupon = async () => {
+  if (!couponToDelete.value) return;
+  try {
+    await deleteCoupon(couponToDelete.value.id);
+    toast.success("Coupon deleted.");
+    showDeleteCouponConfirm.value = false;
+    couponToDelete.value = null;
+    await loadCoupons();
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : "Failed to delete coupon");
+  }
+};
+const couponScopeLabel = (scope: string | null) => {
+  if (scope === "renewal") return "Renewals only";
+  if (scope === "both") return "Purchase + renewals";
+  return "First purchase";
+};
+const couponDiscountLabel = (coupon: PlanCoupon) => {
+  const parts: string[] = [];
+  if (Number(coupon.discount_percent ?? 0) > 0) parts.push(`${coupon.discount_percent}%`);
+  if (Number(coupon.discount_credits ?? 0) > 0) parts.push(`${Number(coupon.discount_credits).toLocaleString()} cr`);
+  return parts.join(" + ") || "—";
 };
 
 const openCatModal = (cat?: Category) => {
@@ -479,7 +596,7 @@ const executeCancelSub = async () => {
   if (!subToCancel.value) return;
   try {
     await cancelSubscription(subToCancel.value.id);
-    toast.success("Subscription cancelled!"); showCancelSubConfirm.value = false; subToCancel.value = null;
+    toast.success(settingsForm.value.cancel_at_period_end ? "Subscription scheduled to cancel at period end." : "Subscription cancelled!"); showCancelSubConfirm.value = false; subToCancel.value = null;
     await loadSubscriptions(); await loadStats();
   } catch (e) { toast.error(e instanceof Error ? e.message : "Failed to cancel subscription"); }
 };
@@ -514,7 +631,7 @@ const totalSubscriptions = computed(() => {
 });
 const editorTitle = computed(() => editingPlan.value ? `Edit — ${editingPlan.value.name}` : "New Plan");
 
-onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), loadSettings(), loadOptions(), loadCategories()]));
+onMounted(() => Promise.all([loadPlans(), loadSubscriptions(), loadStats(), loadSettings(), loadOptions(), loadCategories(), loadCoupons()]));
 
 watch(imageSearch, () => {
   if (activeTab.value === "plans" && currentView.value === "editor") {
@@ -537,7 +654,73 @@ watch(
   <div class="w-full h-full overflow-auto min-h-screen">
 
 
-    <div v-if="activeTab === 'plans' && currentView === 'editor'" class="container mx-auto max-w-4xl px-4 md:px-8 py-6">
+    <div v-if="activeTab === 'coupons' && couponView === 'editor'" class="container mx-auto max-w-3xl px-4 md:px-8 py-6">
+      <div class="flex items-center gap-3 mb-6">
+        <button type="button" @click="cancelCouponEditor" class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft class="h-4 w-4" />Back to Coupons
+        </button>
+        <span class="text-muted-foreground/40">/</span>
+        <h1 class="text-base font-semibold text-foreground">{{ editingCoupon ? `Edit — ${editingCoupon.code}` : "New Coupon" }}</h1>
+      </div>
+
+      <form @submit.prevent="saveCoupon" class="bg-card border border-border rounded-xl shadow-sm p-6 space-y-5">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="md:col-span-2">
+            <label class="block text-xs font-medium text-muted-foreground mb-1.5">Coupon code *</label>
+            <input v-model="couponForm.code" type="text" required placeholder="SUMMER25"
+              class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm uppercase placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-muted-foreground mb-1.5">Discount percent</label>
+            <input v-model.number="couponForm.discount_percent" type="number" min="0" max="100" step="0.01"
+              class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-muted-foreground mb-1.5">Fixed discount (credits)</label>
+            <input v-model.number="couponForm.discount_credits" type="number" min="0" step="1"
+              class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-muted-foreground mb-1.5">Applies to</label>
+            <select v-model="couponForm.coupon_scope"
+              class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+              <option value="initial">First purchase only</option>
+              <option value="renewal">Renewals only</option>
+              <option value="both">First purchase + renewals</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-muted-foreground mb-1.5">Limit to plan</label>
+            <select v-model="couponForm.plan_id"
+              class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+              <option :value="null">Any plan</option>
+              <option v-for="plan in planOptions.plans" :key="plan.id" :value="plan.id">{{ plan.name }}</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-muted-foreground mb-1.5">Max uses (0 = unlimited)</label>
+            <input v-model.number="couponForm.max_uses" type="number" min="0" step="1"
+              class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-muted-foreground mb-1.5">Expires at</label>
+            <input v-model="couponForm.expires_at" type="date"
+              class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+          </div>
+        </div>
+        <p class="text-xs text-muted-foreground">Users enter this code when subscribing in the client billing area. At least one discount type is required.</p>
+        <div class="flex justify-end gap-2 pt-2 border-t border-border">
+          <button type="button" @click="cancelCouponEditor" class="rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Cancel</button>
+          <button type="submit" :disabled="couponsLoading" class="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors">
+            <Loader2 v-if="couponsLoading" class="h-4 w-4 animate-spin" />
+            <Save v-else class="h-4 w-4" />
+            {{ editingCoupon ? "Update Coupon" : "Create Coupon" }}
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <div v-else-if="activeTab === 'plans' && currentView === 'editor'" class="container mx-auto max-w-4xl px-4 md:px-8 py-6">
 
       <div class="flex items-center gap-3 mb-6">
         <button @click="cancelEditor" class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
@@ -1343,6 +1526,10 @@ watch(
           class="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm">
           <Plus class="h-4 w-4" />New Category
         </button>
+        <button v-if="activeTab === 'coupons'" @click="openCreateCoupon"
+          class="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm">
+          <Plus class="h-4 w-4" />New Coupon
+        </button>
       </div>
 
 
@@ -1391,8 +1578,8 @@ watch(
 
 
       <div class="flex gap-1 mb-5 bg-muted/50 rounded-xl p-1 w-fit flex-wrap">
-        <button v-for="tab in [{ key: 'plans', label: 'Plans', icon: CreditCard }, { key: 'categories', label: 'Categories', icon: FolderOpen }, { key: 'subscriptions', label: 'Subscriptions', icon: BarChart3 }, { key: 'settings', label: 'Settings', icon: Settings }]"
-          :key="tab.key" @click="activeTab = tab.key as Tab; currentView = 'list'"
+        <button v-for="tab in [{ key: 'plans', label: 'Plans', icon: CreditCard }, { key: 'categories', label: 'Categories', icon: FolderOpen }, { key: 'coupons', label: 'Coupons', icon: Ticket }, { key: 'subscriptions', label: 'Subscriptions', icon: BarChart3 }, { key: 'settings', label: 'Settings', icon: Settings }]"
+          :key="tab.key" @click="activeTab = tab.key as Tab; currentView = 'list'; couponView = 'list'"
           :class="['inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all', activeTab === tab.key ? 'bg-card text-foreground shadow-sm border border-border' : 'text-muted-foreground hover:text-foreground']">
           <component :is="tab.icon" class="h-4 w-4" />{{ tab.label }}
         </button>
@@ -1643,8 +1830,8 @@ watch(
                   </div>
                 </td>
                 <td class="px-4 py-3">
-                  <span :class="['inline-flex px-2 py-0.5 rounded-full text-xs font-medium', statusBadgeClass(sub.status)]">
-                    {{ sub.status.charAt(0).toUpperCase() + sub.status.slice(1) }}
+                  <span :class="['inline-flex px-2 py-0.5 rounded-full text-xs font-medium', statusBadgeClass(isPendingCancellation(sub) ? 'cancelling' : sub.status)]">
+                    {{ subscriptionStatusLabel(sub) }}
                   </span>
                 </td>
                 <td class="px-4 py-3 text-muted-foreground text-xs hidden md:table-cell">{{ formatDate(sub.next_renewal_at) }}</td>
@@ -1675,7 +1862,7 @@ watch(
                       <CircleDollarSign class="h-3 w-3" />Refund
                     </button>
                     <button
-                      v-if="sub.status !== 'cancelled' && sub.status !== 'expired'"
+                      v-if="sub.status !== 'cancelled' && sub.status !== 'expired' && !isPendingCancellation(sub)"
                       type="button"
                       @click="confirmCancelSub(sub)"
                       class="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/5 px-2 py-1 text-xs font-medium text-red-400 hover:bg-red-500/15 transition-all"
@@ -1693,6 +1880,67 @@ watch(
           <button @click="subsPage--; loadSubscriptions()" :disabled="subsPage <= 1" class="rounded-lg border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-40 transition-colors">Previous</button>
           <span class="text-sm text-muted-foreground">{{ subsPage }} / {{ subsTotalPages }}</span>
           <button @click="subsPage++; loadSubscriptions()" :disabled="subsPage >= subsTotalPages" class="rounded-lg border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-40 transition-colors">Next</button>
+        </div>
+      </div>
+
+
+      <div v-if="activeTab === 'coupons'">
+        <div class="flex items-center gap-3 mb-4 flex-wrap">
+          <input v-model="couponsSearch" @keyup.enter="couponsPage = 1; loadCoupons()" type="text" placeholder="Search coupon codes..."
+            class="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring w-full md:w-64" />
+          <button type="button" @click="couponsPage = 1; loadCoupons()" class="rounded-lg border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent transition-colors">Search</button>
+        </div>
+
+        <div v-if="couponsLoading" class="flex justify-center py-16"><Loader2 class="h-7 w-7 animate-spin text-muted-foreground" /></div>
+
+        <div v-else-if="coupons.length === 0" class="text-center py-16 bg-card border border-border rounded-xl">
+          <Ticket class="h-12 w-12 mx-auto mb-3 opacity-20" />
+          <p class="font-medium text-muted-foreground">No coupon codes yet</p>
+          <button @click="openCreateCoupon" class="mt-3 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors">
+            <Plus class="h-4 w-4" />Create First Coupon
+          </button>
+        </div>
+
+        <div v-else class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-border bg-muted/40">
+                <th class="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Code</th>
+                <th class="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Discount</th>
+                <th class="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide hidden sm:table-cell">Scope</th>
+                <th class="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide hidden md:table-cell">Plan</th>
+                <th class="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Uses</th>
+                <th class="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide hidden lg:table-cell">Status</th>
+                <th class="px-4 py-3 w-24"></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-border">
+              <tr v-for="coupon in coupons" :key="coupon.id" class="hover:bg-muted/20 transition-colors group">
+                <td class="px-4 py-3 font-mono font-semibold">{{ coupon.code }}</td>
+                <td class="px-4 py-3">{{ couponDiscountLabel(coupon) }}</td>
+                <td class="px-4 py-3 hidden sm:table-cell text-xs text-muted-foreground">{{ couponScopeLabel(coupon.coupon_scope) }}</td>
+                <td class="px-4 py-3 hidden md:table-cell text-xs">{{ coupon.plan_name ?? "Any plan" }}</td>
+                <td class="px-4 py-3 text-xs">{{ coupon.usage_count ?? coupon.uses ?? 0 }}<span v-if="coupon.max_uses > 0"> / {{ coupon.max_uses }}</span><span v-else> / ∞</span></td>
+                <td class="px-4 py-3 hidden lg:table-cell">
+                  <span :class="['inline-flex px-2 py-0.5 rounded-full text-xs font-medium border', coupon.is_valid ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30']">
+                    {{ coupon.is_valid ? "Active" : "Inactive" }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-right">
+                  <div class="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button type="button" @click="openEditCoupon(coupon)" class="rounded-lg border border-border p-1.5 hover:bg-accent transition-colors"><Pencil class="h-3.5 w-3.5" /></button>
+                    <button type="button" @click="confirmDeleteCoupon(coupon)" class="rounded-lg border border-red-500/30 p-1.5 text-red-400 hover:bg-red-500/10 transition-colors"><Trash2 class="h-3.5 w-3.5" /></button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-if="couponsTotalPages > 1" class="flex items-center justify-center gap-2 mt-5">
+          <button @click="couponsPage--; loadCoupons()" :disabled="couponsPage <= 1" class="rounded-lg border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-40 transition-colors">Previous</button>
+          <span class="text-sm text-muted-foreground">{{ couponsPage }} / {{ couponsTotalPages }}</span>
+          <button @click="couponsPage++; loadCoupons()" :disabled="couponsPage >= couponsTotalPages" class="rounded-lg border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-40 transition-colors">Next</button>
         </div>
       </div>
 
@@ -1715,9 +1963,17 @@ watch(
               </span>
             </div>
             <p class="text-xs text-muted-foreground mt-3">
-              <strong>Cancellation:</strong> server is <strong>suspended immediately</strong>.
-              <template v-if="settingsForm.termination_days > 0"> If it stays suspended for {{ settingsForm.termination_days }} day(s), the server is <strong class="text-red-400">permanently deleted</strong>.</template>
-              <template v-else> Suspended servers are <strong>never auto-deleted</strong> (manage manually).</template>
+              <strong>Cancellation:</strong>
+              <template v-if="settingsForm.cancel_at_period_end">
+                server stays available until the billing period ends, then enters the suspend
+                <template v-if="settingsForm.termination_days > 0"> → delete ({{ settingsForm.termination_days }}d)</template>
+                lifecycle.
+              </template>
+              <template v-else>
+                server is <strong>suspended immediately</strong>.
+                <template v-if="settingsForm.termination_days > 0"> If it stays suspended for {{ settingsForm.termination_days }} day(s), the server is <strong class="text-red-400">permanently deleted</strong>.</template>
+              </template>
+              <template v-if="settingsForm.termination_days === 0 && !settingsForm.cancel_at_period_end"> Suspended servers are <strong>never auto-deleted</strong> (manage manually).</template>
             </p>
           </div>
 
@@ -1830,10 +2086,20 @@ watch(
               <div class="flex items-center justify-between gap-4 px-5 py-4">
                 <div>
                   <p class="text-sm font-medium">Allow user cancellation</p>
-                  <p class="text-xs text-muted-foreground mt-0.5">Let users cancel their own subscriptions from the billing page. The server is suspended immediately on cancellation.</p>
+                  <p class="text-xs text-muted-foreground mt-0.5">Let users cancel their own subscriptions from the billing page.</p>
                 </div>
                 <button type="button" @click="settingsForm.allow_user_cancellation = !settingsForm.allow_user_cancellation" class="shrink-0">
                   <ToggleRight v-if="settingsForm.allow_user_cancellation" class="h-8 w-8 text-primary" />
+                  <ToggleLeft v-else class="h-8 w-8 text-muted-foreground" />
+                </button>
+              </div>
+              <div class="flex items-center justify-between gap-4 px-5 py-4">
+                <div>
+                  <p class="text-sm font-medium">Cancel at end of billing period</p>
+                  <p class="text-xs text-muted-foreground mt-0.5">When enabled, cancelled subscriptions keep the server running until the current term ends, then follow the normal suspend/delete lifecycle. When disabled, the server is suspended immediately.</p>
+                </div>
+                <button type="button" @click="settingsForm.cancel_at_period_end = !settingsForm.cancel_at_period_end" class="shrink-0">
+                  <ToggleRight v-if="settingsForm.cancel_at_period_end" class="h-8 w-8 text-primary" />
                   <ToggleLeft v-else class="h-8 w-8 text-muted-foreground" />
                 </button>
               </div>
@@ -1886,7 +2152,15 @@ watch(
         <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-sm">
           <div class="px-6 py-4 border-b border-border"><h2 class="text-base font-semibold">Cancel Subscription</h2></div>
           <div class="p-6">
-            <p class="text-sm text-muted-foreground mb-5">Cancel subscription <strong class="text-foreground">#{{ subToCancel?.id }}</strong> for <strong class="text-foreground">{{ subToCancel?.username ?? "User #" + subToCancel?.user_id }}</strong>? No refund issued.</p>
+            <p class="text-sm text-muted-foreground mb-5">
+              Cancel subscription <strong class="text-foreground">#{{ subToCancel?.id }}</strong> for <strong class="text-foreground">{{ subToCancel?.username ?? "User #" + subToCancel?.user_id }}</strong>? No refund issued.
+              <span v-if="settingsForm.cancel_at_period_end && subToCancel?.next_renewal_at" class="block mt-2 text-amber-500">
+                Server stays active until {{ new Date(subToCancel.next_renewal_at).toLocaleDateString() }}, then enters suspend/delete lifecycle.
+              </span>
+              <span v-else-if="subToCancel?.server_uuid" class="block mt-2 text-amber-500">
+                Server will be suspended immediately.
+              </span>
+            </p>
             <div class="flex gap-3">
               <button @click="showCancelSubConfirm = false" class="flex-1 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Go Back</button>
               <button @click="executeCancelSub" :disabled="subsLoading" class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60 transition-colors">
@@ -2019,6 +2293,23 @@ watch(
               <button @click="showDeleteCatConfirm = false" class="flex-1 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Cancel</button>
               <button @click="executeDeleteCat" :disabled="catsLoading" class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60 transition-colors">
                 <Loader2 v-if="catsLoading" class="h-4 w-4 animate-spin" /><Trash2 v-else class="h-4 w-4" />Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="showDeleteCouponConfirm && couponToDelete" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showDeleteCouponConfirm = false">
+        <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-sm">
+          <div class="px-6 py-4 border-b border-border"><h2 class="text-base font-semibold">Delete Coupon</h2></div>
+          <div class="p-6">
+            <p class="text-sm text-muted-foreground mb-5">Delete coupon <strong class="text-foreground font-mono">{{ couponToDelete.code }}</strong>? Users will no longer be able to redeem it.</p>
+            <div class="flex gap-3">
+              <button @click="showDeleteCouponConfirm = false" class="flex-1 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Cancel</button>
+              <button @click="executeDeleteCoupon" :disabled="couponsLoading" class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60 transition-colors">
+                <Loader2 v-if="couponsLoading" class="h-4 w-4 animate-spin" /><Trash2 v-else class="h-4 w-4" />Delete
               </button>
             </div>
           </div>

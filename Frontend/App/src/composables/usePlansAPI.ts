@@ -323,5 +323,37 @@ export function useUserPlansAPI() {
     }
   };
 
-  return { loading, listPlans, subscribeToPlan };
+  const validateCoupon = async (
+    planId: number,
+    couponCode: string,
+    customResources?: Record<string, number>,
+  ): Promise<{
+    valid: boolean;
+    total_credits: number;
+    charge_credits: number;
+    discount_credits: number;
+    coupon: Record<string, unknown>;
+  }> => {
+    loading.value = true;
+    try {
+      const body: Record<string, unknown> = {
+        coupon_code: couponCode.trim().toUpperCase(),
+      };
+      if (customResources && Object.keys(customResources).length > 0) {
+        body.custom_resources = customResources;
+      }
+      const res = await axios.post(
+        `/api/user/billingplans/plans/${planId}/validate-coupon`,
+        body,
+      );
+      return res.data.data;
+    } catch (e) {
+      const err = e as AxiosError<{ message?: string }>;
+      throw new Error(err.response?.data?.message || "Invalid coupon code");
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  return { loading, listPlans, subscribeToPlan, validateCoupon };
 }

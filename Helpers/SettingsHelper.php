@@ -95,6 +95,21 @@ class SettingsHelper
         self::set('allow_user_cancellation', $value ? 'true' : 'false');
     }
 
+    /**
+     * When true, cancellation keeps the server running until the current billing period ends,
+     * then the normal suspend / termination lifecycle applies. When false, the server is
+     * suspended immediately on cancel.
+     */
+    public static function getCancelAtPeriodEnd(): bool
+    {
+        return self::get('cancel_at_period_end', 'true') === 'true';
+    }
+
+    public static function setCancelAtPeriodEnd(bool $value): void
+    {
+        self::set('cancel_at_period_end', $value ? 'true' : 'false');
+    }
+
     /** Send email to user when their subscription is auto-terminated. */
     public static function getSendTerminationEmail(): bool
     {
@@ -131,6 +146,7 @@ class SettingsHelper
             'send_suspension_email' => self::getSendSuspensionEmail(),
             'send_termination_email' => self::getSendTerminationEmail(),
             'allow_user_cancellation' => self::getAllowUserCancellation(),
+            'cancel_at_period_end' => self::getCancelAtPeriodEnd(),
             'generate_invoices' => self::getGenerateInvoices(),
         ];
     }

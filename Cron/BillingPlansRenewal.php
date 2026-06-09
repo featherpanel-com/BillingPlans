@@ -343,16 +343,30 @@ class BillingPlansRenewal implements TimeTask
             $userId = (int) $subscription['user_id'];
             $planName = $subscription['plan_name'] ?? 'Unknown Plan';
             $serverUuid = $subscription['server_uuid'];
+            $chargeBreakdown = Plan::calculateChargeBreakdown($subscription);
+            $priceCredits = (int) $chargeBreakdown['total_credits'];
 
             MinecraftColorCodeSupport::sendOutputWithNewLine(
-                "&8  [#$subId] &7Cancelled sub — billing period ended, suspending server $serverUuid"
+                "&8  [#$subId] &7Cancelled sub — billing period ended, entering suspension lifecycle for server $serverUuid"
             );
-            Subscription::update($subId, ['server_uuid' => null]);
-            if ($this->suspendServer($serverUuid, $subId, $app)) {
-                ++$stats['servers_actioned'];
+
+            Subscription::update($subId, [
+                'status' => 'suspended',
+                'suspended_at' => date('Y-m-d H:i:s'),
+                'server_suspend_sync' => 0,
+            ]);
+
+            if ($serverUuid && SettingsHelper::getSuspendServers()) {
+                if ($this->suspendServer($serverUuid, $subId, $app)) {
+                    ++$stats['servers_actioned'];
+                }
             }
 
-            $app->getLogger()->info("BillingPlans: Server $serverUuid suspended for expired cancelled subscription #$subId (user #$userId).");
+            if (SettingsHelper::getSendSuspensionEmail()) {
+                $this->sendSuspensionEmail($userId, $planName, $priceCredits, $app);
+            }
+
+            $app->getLogger()->info("BillingPlans: Subscription #$subId moved to suspended after end-of-term cancellation (user #$userId, server $serverUuid).");
         }
 
         return $stats;

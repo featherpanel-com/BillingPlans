@@ -21,15 +21,15 @@ use App\Chat\Database;
 
 class Plan
 {
-    private static string $table = "featherpanel_billingplans_plans";
+    private static string $table = 'featherpanel_billingplans_plans';
 
     public static function getById(int $id): ?array
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            "SELECT * FROM " . self::$table . " WHERE id = :id LIMIT 1",
+            'SELECT * FROM ' . self::$table . ' WHERE id = :id LIMIT 1',
         );
-        $stmt->execute(["id" => $id]);
+        $stmt->execute(['id' => $id]);
 
         return $stmt->fetch(\PDO::FETCH_ASSOC) ?: null;
     }
@@ -37,11 +37,11 @@ class Plan
     public static function getAll(bool $activeOnly = false): array
     {
         $pdo = Database::getPdoConnection();
-        $sql = "SELECT * FROM " . self::$table;
+        $sql = 'SELECT * FROM ' . self::$table;
         if ($activeOnly) {
-            $sql .= " WHERE is_active = 1";
+            $sql .= ' WHERE is_active = 1';
         }
-        $sql .= " ORDER BY price_credits ASC, name ASC";
+        $sql .= ' ORDER BY price_credits ASC, name ASC';
         $stmt = $pdo->query($sql);
 
         return $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
@@ -50,7 +50,7 @@ class Plan
     public static function getPaginated(
         int $page,
         int $limit,
-        string $search = "",
+        string $search = '',
         bool $activeOnly = false,
     ): array {
         $pdo = Database::getPdoConnection();
@@ -59,50 +59,50 @@ class Plan
         $params = [];
 
         if ($activeOnly) {
-            $where[] = "is_active = 1";
+            $where[] = 'is_active = 1';
         }
 
         if (!empty($search)) {
-            $where[] = "(name LIKE :search OR description LIKE :search)";
-            $params["search"] = "%" . $search . "%";
+            $where[] = '(name LIKE :search OR description LIKE :search)';
+            $params['search'] = '%' . $search . '%';
         }
 
         $whereClause = !empty($where)
-            ? "WHERE " . implode(" AND ", $where)
-            : "";
+            ? 'WHERE ' . implode(' AND ', $where)
+            : '';
 
         $countStmt = $pdo->prepare(
-            "SELECT COUNT(*) as count FROM " .
+            'SELECT COUNT(*) as count FROM ' .
                 self::$table .
-                " " .
+                ' ' .
                 $whereClause,
         );
         $countStmt->execute($params);
-        $total = (int) $countStmt->fetch(\PDO::FETCH_ASSOC)["count"];
+        $total = (int) $countStmt->fetch(\PDO::FETCH_ASSOC)['count'];
 
         $sql =
-            "SELECT * FROM " .
+            'SELECT * FROM ' .
             self::$table .
-            " " .
+            ' ' .
             $whereClause .
-            " ORDER BY id DESC LIMIT :limit OFFSET :offset";
+            ' ORDER BY id DESC LIMIT :limit OFFSET :offset';
         $stmt = $pdo->prepare($sql);
         foreach ($params as $key => $value) {
-            $stmt->bindValue(":" . $key, $value);
+            $stmt->bindValue(':' . $key, $value);
         }
-        $stmt->bindValue(":limit", $limit, \PDO::PARAM_INT);
-        $stmt->bindValue(":offset", $offset, \PDO::PARAM_INT);
+        $stmt->bindValue(':limit', $limit, \PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset, \PDO::PARAM_INT);
         $stmt->execute();
         $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
 
-        return ["data" => $rows, "total" => $total];
+        return ['data' => $rows, 'total' => $total];
     }
 
     public static function create(array $data): ?int
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            "INSERT INTO " .
+            'INSERT INTO ' .
                 self::$table .
                 '
              (category_id, name, description, long_description, price_credits, billing_period_days, is_active, max_subscriptions, server_config,
@@ -122,97 +122,89 @@ class Plan
               :allowed_upgrade_plan_ids, :allowed_downgrade_plan_ids, :slider_config)',
         );
         $stmt->execute([
-            "category_id" =>
-                isset($data["category_id"]) && $data["category_id"]
-                    ? (int) $data["category_id"]
+            'category_id' => isset($data['category_id']) && $data['category_id']
+                    ? (int) $data['category_id']
                     : null,
-            "name" => $data["name"],
-            "description" => $data["description"] ?? null,
-            "long_description" => $data["long_description"] ?? null,
-            "price_credits" => (int) ($data["price_credits"] ?? 0),
-            "billing_period_days" => (int) ($data["billing_period_days"] ?? 30),
-            "is_active" => isset($data["is_active"])
-                ? (int) $data["is_active"]
+            'name' => $data['name'],
+            'description' => $data['description'] ?? null,
+            'long_description' => $data['long_description'] ?? null,
+            'price_credits' => (int) ($data['price_credits'] ?? 0),
+            'billing_period_days' => (int) ($data['billing_period_days'] ?? 30),
+            'is_active' => isset($data['is_active'])
+                ? (int) $data['is_active']
                 : 1,
-            "server_config" => isset($data["server_config"])
-                ? (is_array($data["server_config"])
-                    ? json_encode($data["server_config"])
-                    : $data["server_config"])
+            'server_config' => isset($data['server_config'])
+                ? (is_array($data['server_config'])
+                    ? json_encode($data['server_config'])
+                    : $data['server_config'])
                 : null,
-            "tax_rate_percent" => self::normalizePercentage(
-                $data["tax_rate_percent"] ?? 0,
+            'tax_rate_percent' => self::normalizePercentage(
+                $data['tax_rate_percent'] ?? 0,
             ),
-            "extra_charge_percent" => self::normalizePercentage(
-                $data["extra_charge_percent"] ?? 0,
+            'extra_charge_percent' => self::normalizePercentage(
+                $data['extra_charge_percent'] ?? 0,
             ),
-            "extra_charge_name" =>
-                isset($data["extra_charge_name"]) &&
-                trim((string) $data["extra_charge_name"]) !== ""
-                    ? trim((string) $data["extra_charge_name"])
+            'extra_charge_name' => isset($data['extra_charge_name'])
+                && trim((string) $data['extra_charge_name']) !== ''
+                    ? trim((string) $data['extra_charge_name'])
                     : null,
-            "max_subscriptions" =>
-                isset($data["max_subscriptions"]) &&
-                $data["max_subscriptions"] !== null &&
-                $data["max_subscriptions"] !== ""
-                    ? (int) $data["max_subscriptions"]
+            'max_subscriptions' => isset($data['max_subscriptions'])
+                && $data['max_subscriptions'] !== null
+                && $data['max_subscriptions'] !== ''
+                    ? (int) $data['max_subscriptions']
                     : null,
             // Multi-node support: store node_ids as JSON, fallback to node_id for legacy
-            "node_ids" =>
-                isset($data["node_ids"]) && is_array($data["node_ids"])
-                    ? json_encode(array_map("intval", $data["node_ids"]))
-                    : (isset($data["node_id"]) && $data["node_id"]
-                        ? json_encode([(int) $data["node_id"]])
+            'node_ids' => isset($data['node_ids']) && is_array($data['node_ids'])
+                    ? json_encode(array_map('intval', $data['node_ids']))
+                    : (isset($data['node_id']) && $data['node_id']
+                        ? json_encode([(int) $data['node_id']])
                         : null),
-            "node_id" =>
-                isset($data["node_id"]) && $data["node_id"]
-                    ? (int) $data["node_id"]
+            'node_id' => isset($data['node_id']) && $data['node_id']
+                    ? (int) $data['node_id']
                     : null, // legacy
-            "realms_id" =>
-                isset($data["realms_id"]) && $data["realms_id"]
-                    ? (int) $data["realms_id"]
+            'realms_id' => isset($data['realms_id']) && $data['realms_id']
+                    ? (int) $data['realms_id']
                     : null,
-            "user_can_choose_realm" => isset($data["user_can_choose_realm"])
-                ? (int) (bool) $data["user_can_choose_realm"]
+            'user_can_choose_realm' => isset($data['user_can_choose_realm'])
+                ? (int) (bool) $data['user_can_choose_realm']
                 : 0,
-            "allowed_realms" => self::encodeIds(
-                $data["allowed_realms"] ?? null,
+            'allowed_realms' => self::encodeIds(
+                $data['allowed_realms'] ?? null,
             ),
-            "spell_id" =>
-                isset($data["spell_id"]) && $data["spell_id"]
-                    ? (int) $data["spell_id"]
+            'spell_id' => isset($data['spell_id']) && $data['spell_id']
+                    ? (int) $data['spell_id']
                     : null,
-            "user_can_choose_spell" => isset($data["user_can_choose_spell"])
-                ? (int) (bool) $data["user_can_choose_spell"]
+            'user_can_choose_spell' => isset($data['user_can_choose_spell'])
+                ? (int) (bool) $data['user_can_choose_spell']
                 : 0,
-            "allowed_spells" => self::encodeIds(
-                $data["allowed_spells"] ?? null,
+            'allowed_spells' => self::encodeIds(
+                $data['allowed_spells'] ?? null,
             ),
-            "memory" => (int) ($data["memory"] ?? 512),
-            "cpu" => (int) ($data["cpu"] ?? 100),
-            "disk" => (int) ($data["disk"] ?? 1024),
-            "swap" => (int) ($data["swap"] ?? 0),
-            "io" => (int) ($data["io"] ?? 500),
-            "backup_limit" => (int) ($data["backup_limit"] ?? 0),
-            "database_limit" => (int) ($data["database_limit"] ?? 0),
-            "allocation_limit" =>
-                isset($data["allocation_limit"]) &&
-                $data["allocation_limit"] !== null &&
-                $data["allocation_limit"] !== ""
-                    ? (int) $data["allocation_limit"]
+            'memory' => (int) ($data['memory'] ?? 512),
+            'cpu' => (int) ($data['cpu'] ?? 100),
+            'disk' => (int) ($data['disk'] ?? 1024),
+            'swap' => (int) ($data['swap'] ?? 0),
+            'io' => (int) ($data['io'] ?? 500),
+            'backup_limit' => (int) ($data['backup_limit'] ?? 0),
+            'database_limit' => (int) ($data['database_limit'] ?? 0),
+            'allocation_limit' => isset($data['allocation_limit'])
+                && $data['allocation_limit'] !== null
+                && $data['allocation_limit'] !== ''
+                    ? (int) $data['allocation_limit']
                     : null,
-            "startup_override" => $data["startup_override"] ?? null,
-            "image_override" => $data["image_override"] ?? null,
-            "card_background_image" => $data["card_background_image"] ?? null,
-            "allowed_upgrade_plan_ids" => self::encodeIds(
-                $data["allowed_upgrade_plan_ids"] ?? null,
+            'startup_override' => $data['startup_override'] ?? null,
+            'image_override' => $data['image_override'] ?? null,
+            'card_background_image' => $data['card_background_image'] ?? null,
+            'allowed_upgrade_plan_ids' => self::encodeIds(
+                $data['allowed_upgrade_plan_ids'] ?? null,
             ),
-            "allowed_downgrade_plan_ids" => self::encodeIds(
-                $data["allowed_downgrade_plan_ids"] ?? null,
+            'allowed_downgrade_plan_ids' => self::encodeIds(
+                $data['allowed_downgrade_plan_ids'] ?? null,
             ),
-            "slider_config" => isset($data["slider_config"])
-                ? (is_array($data["slider_config"])
-                    ? json_encode($data["slider_config"])
-                    : $data["slider_config"])
+            'slider_config' => isset($data['slider_config'])
+                ? (is_array($data['slider_config'])
+                    ? json_encode($data['slider_config'])
+                    : $data['slider_config'])
                 : null,
         ]);
 
@@ -225,69 +217,69 @@ class Plan
     {
         $pdo = Database::getPdoConnection();
         $allowed = [
-            "category_id",
-            "name",
-            "description",
-            "long_description",
-            "price_credits",
-            "billing_period_days",
-            "is_active",
-            "max_subscriptions",
-            "server_config",
-            "tax_rate_percent",
-            "extra_charge_percent",
-            "extra_charge_name",
-            "node_ids",
-            "node_id",
-            "realms_id",
-            "user_can_choose_realm",
-            "allowed_realms",
-            "spell_id",
-            "user_can_choose_spell",
-            "allowed_spells",
-            "memory",
-            "cpu",
-            "disk",
-            "swap",
-            "io",
-            "backup_limit",
-            "database_limit",
-            "allocation_limit",
-            "startup_override",
-            "image_override",
-            "card_background_image",
-            "allowed_upgrade_plan_ids",
-            "allowed_downgrade_plan_ids",
-            "slider_config",
+            'category_id',
+            'name',
+            'description',
+            'long_description',
+            'price_credits',
+            'billing_period_days',
+            'is_active',
+            'max_subscriptions',
+            'server_config',
+            'tax_rate_percent',
+            'extra_charge_percent',
+            'extra_charge_name',
+            'node_ids',
+            'node_id',
+            'realms_id',
+            'user_can_choose_realm',
+            'allowed_realms',
+            'spell_id',
+            'user_can_choose_spell',
+            'allowed_spells',
+            'memory',
+            'cpu',
+            'disk',
+            'swap',
+            'io',
+            'backup_limit',
+            'database_limit',
+            'allocation_limit',
+            'startup_override',
+            'image_override',
+            'card_background_image',
+            'allowed_upgrade_plan_ids',
+            'allowed_downgrade_plan_ids',
+            'slider_config',
         ];
         $sets = [];
-        $params = ["id" => $id];
+        $params = ['id' => $id];
         foreach ($allowed as $field) {
             if (array_key_exists($field, $data)) {
                 $sets[] = "`{$field}` = :{$field}";
-                if ($field === "server_config" && is_array($data[$field])) {
+                if ($field === 'server_config' && is_array($data[$field])) {
                     $params[$field] = json_encode($data[$field]);
                 } elseif (
                     in_array(
                         $field,
                         [
-                            "allowed_realms",
-                            "allowed_spells",
-                            "allowed_upgrade_plan_ids",
-                            "allowed_downgrade_plan_ids",
+                            'allowed_realms',
+                            'allowed_spells',
+                            'allowed_upgrade_plan_ids',
+                            'allowed_downgrade_plan_ids',
                         ],
                         true,
                     )
                 ) {
                     $params[$field] = self::encodeIds($data[$field]);
-                } elseif ($field === "node_ids") {
+                } elseif ($field === 'node_ids') {
                     $params[$field] = is_array($data[$field])
-                        ? json_encode(array_map("intval", $data[$field]))
+                        ? json_encode(array_map('intval', $data[$field]))
                         : null;
                 } elseif (
                     in_array(
                         $field,
-                        ["user_can_choose_realm", "user_can_choose_spell"],
+                        ['user_can_choose_realm', 'user_can_choose_spell'],
                         true,
                     )
                 ) {
@@ -295,19 +287,19 @@ class Plan
                 } elseif (
                     in_array(
                         $field,
-                        ["tax_rate_percent", "extra_charge_percent"],
+                        ['tax_rate_percent', 'extra_charge_percent'],
                         true,
                     )
                 ) {
                     $params[$field] = self::normalizePercentage($data[$field]);
-                } elseif ($field === "slider_config") {
+                } elseif ($field === 'slider_config') {
                     $params[$field] = is_array($data[$field])
                         ? json_encode($data[$field])
                         : $data[$field];
-                } elseif ($field === "extra_charge_name") {
+                } elseif ($field === 'extra_charge_name') {
                     $params[$field] =
-                        isset($data[$field]) &&
-                        trim((string) $data[$field]) !== ""
+                        isset($data[$field])
+                        && trim((string) $data[$field]) !== ''
                             ? trim((string) $data[$field])
                             : null;
                 } else {
@@ -321,11 +313,11 @@ class Plan
         }
 
         $stmt = $pdo->prepare(
-            "UPDATE " .
+            'UPDATE ' .
                 self::$table .
-                " SET " .
-                implode(", ", $sets) .
-                " WHERE id = :id",
+                ' SET ' .
+                implode(', ', $sets) .
+                ' WHERE id = :id',
         );
 
         return $stmt->execute($params);
@@ -338,14 +330,14 @@ class Plan
      */
     public static function getNodeIds(array $plan): array
     {
-        if (!empty($plan["node_ids"])) {
-            $ids = json_decode($plan["node_ids"], true);
+        if (!empty($plan['node_ids'])) {
+            $ids = json_decode($plan['node_ids'], true);
             if (is_array($ids)) {
-                return array_map("intval", $ids);
+                return array_map('intval', $ids);
             }
         }
-        if (!empty($plan["node_id"])) {
-            return [(int) $plan["node_id"]];
+        if (!empty($plan['node_id'])) {
+            return [(int) $plan['node_id']];
         }
 
         return [];
@@ -359,19 +351,19 @@ class Plan
             "SELECT COUNT(*) as count FROM featherpanel_billingplans_subscriptions
              WHERE plan_id = :plan_id AND status IN ('active','suspended','pending')",
         );
-        $stmt->execute(["plan_id" => $planId]);
+        $stmt->execute(['plan_id' => $planId]);
 
-        return (int) ($stmt->fetch(\PDO::FETCH_ASSOC)["count"] ?? 0);
+        return (int) ($stmt->fetch(\PDO::FETCH_ASSOC)['count'] ?? 0);
     }
 
     public static function delete(int $id): bool
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            "DELETE FROM " . self::$table . " WHERE id = :id",
+            'DELETE FROM ' . self::$table . ' WHERE id = :id',
         );
 
-        return $stmt->execute(["id" => $id]);
+        return $stmt->execute(['id' => $id]);
     }
 
     /**
@@ -381,30 +373,30 @@ class Plan
      */
     public static function decodeIds(mixed $raw): array
     {
-        if ($raw === null || $raw === "") {
+        if ($raw === null || $raw === '') {
             return [];
         }
         if (is_array($raw)) {
-            return array_values(array_map("intval", $raw));
+            return array_values(array_map('intval', $raw));
         }
         $decoded = json_decode((string) $raw, true);
 
         return is_array($decoded)
-            ? array_values(array_map("intval", $decoded))
+            ? array_values(array_map('intval', $decoded))
             : [];
     }
 
     public static function getBillingPeriodLabel(int $days): string
     {
         return match (true) {
-            $days === 1 => "Daily",
-            $days === 7 => "Weekly",
-            $days === 14 => "Bi-Weekly",
-            $days === 30 => "Monthly",
-            $days === 60 => "Every 2 Months",
-            $days === 90 => "Quarterly",
-            $days === 180 => "Semi-Annually",
-            $days === 365 => "Annually",
+            $days === 1 => 'Daily',
+            $days === 7 => 'Weekly',
+            $days === 14 => 'Bi-Weekly',
+            $days === 30 => 'Monthly',
+            $days === 60 => 'Every 2 Months',
+            $days === 90 => 'Quarterly',
+            $days === 180 => 'Semi-Annually',
+            $days === 365 => 'Annually',
             default => "Every {$days} Days",
         };
     }
@@ -416,36 +408,36 @@ class Plan
      */
     public static function calculateChargeBreakdown(array $plan): array
     {
-        $baseCredits = max(0, (int) ($plan["price_credits"] ?? 0));
+        $baseCredits = max(0, (int) ($plan['price_credits'] ?? 0));
 
         // Add additional costs from dynamic resource sliders if slider_config is present
-        $sliderConfig = isset($plan["slider_config"])
-            ? (is_string($plan["slider_config"])
-                ? json_decode($plan["slider_config"], true)
-                : $plan["slider_config"])
+        $sliderConfig = isset($plan['slider_config'])
+            ? (is_string($plan['slider_config'])
+                ? json_decode($plan['slider_config'], true)
+                : $plan['slider_config'])
             : null;
-        $customResources = isset($plan["custom_resources"])
-            ? (is_string($plan["custom_resources"])
-                ? json_decode($plan["custom_resources"], true)
-                : $plan["custom_resources"])
+        $customResources = isset($plan['custom_resources'])
+            ? (is_string($plan['custom_resources'])
+                ? json_decode($plan['custom_resources'], true)
+                : $plan['custom_resources'])
             : null;
 
         if (is_array($sliderConfig) && is_array($customResources)) {
             foreach ($sliderConfig as $resourceKey => $config) {
-                if (!empty($config["enabled"])) {
-                    $baseVal = isset($config["base"])
-                        ? (float) $config["base"]
+                if (!empty($config['enabled'])) {
+                    $baseVal = isset($config['base'])
+                        ? (float) $config['base']
                         : 0;
-                    $maxVal = isset($config["max"])
-                        ? (float) $config["max"]
+                    $maxVal = isset($config['max'])
+                        ? (float) $config['max']
                         : 0;
-                    $stepVal = isset($config["step"])
-                        ? (float) $config["step"]
+                    $stepVal = isset($config['step'])
+                        ? (float) $config['step']
                         : 1;
-                    $costPerStep = isset($config["cost_per_step"])
-                        ? (float) $config["cost_per_step"]
+                    $costPerStep = isset($config['cost_per_step'])
+                        ? (float) $config['cost_per_step']
                         : 0;
-                    $rounding = $config["rounding"] ?? "nearest";
+                    $rounding = $config['rounding'] ?? 'nearest';
 
                     $selectedVal = isset($customResources[$resourceKey])
                         ? (float) $customResources[$resourceKey]
@@ -458,9 +450,9 @@ class Plan
                         );
                         $diff = $selectedVal - $baseVal;
                         $steps = $diff / ($stepVal ?: 1);
-                        if ($rounding === "up") {
+                        if ($rounding === 'up') {
                             $steps = ceil($steps);
-                        } elseif ($rounding === "down") {
+                        } elseif ($rounding === 'down') {
                             $steps = floor($steps);
                         } else {
                             $steps = round($steps);
@@ -473,16 +465,16 @@ class Plan
         }
 
         $taxRatePercent = self::normalizePercentage(
-            $plan["tax_rate_percent"] ?? 0,
+            $plan['tax_rate_percent'] ?? 0,
         );
         $extraChargePercent = self::normalizePercentage(
-            $plan["extra_charge_percent"] ?? 0,
+            $plan['extra_charge_percent'] ?? 0,
         );
         $extraChargeName = trim(
-            (string) ($plan["extra_charge_name"] ?? "Additional charge"),
+            (string) ($plan['extra_charge_name'] ?? 'Additional charge'),
         );
-        if ($extraChargeName === "") {
-            $extraChargeName = "Additional charge";
+        if ($extraChargeName === '') {
+            $extraChargeName = 'Additional charge';
         }
 
         $taxCredits = (int) round(
@@ -501,13 +493,13 @@ class Plan
         );
 
         return [
-            "base_credits" => $baseCredits,
-            "tax_credits" => $taxCredits,
-            "extra_charge_credits" => $extraChargeCredits,
-            "total_credits" => $totalCredits,
-            "tax_rate_percent" => $taxRatePercent,
-            "extra_charge_percent" => $extraChargePercent,
-            "extra_charge_name" => $extraChargeName,
+            'base_credits' => $baseCredits,
+            'tax_credits' => $taxCredits,
+            'extra_charge_credits' => $extraChargeCredits,
+            'total_credits' => $totalCredits,
+            'tax_rate_percent' => $taxRatePercent,
+            'extra_charge_percent' => $extraChargePercent,
+            'extra_charge_name' => $extraChargeName,
         ];
     }
 
@@ -527,7 +519,7 @@ class Plan
     /** Encode int[] → JSON string (or null if empty). */
     private static function encodeIds(mixed $raw): ?string
     {
-        if ($raw === null || $raw === "") {
+        if ($raw === null || $raw === '') {
             return null;
         }
         if (is_string($raw)) {
@@ -538,6 +530,6 @@ class Plan
             return null;
         }
 
-        return json_encode(array_values(array_map("intval", $raw)));
+        return json_encode(array_values(array_map('intval', $raw)));
     }
 }

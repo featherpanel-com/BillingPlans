@@ -280,16 +280,22 @@ class SubscriptionsController
             return ApiResponse::error('Subscription not found', 'SUBSCRIPTION_NOT_FOUND', 404);
         }
 
-        if (!Subscription::update($subscriptionId, [
-            'status' => 'cancelled',
-            'cancelled_at' => date('Y-m-d H:i:s'),
-        ])) {
+        if (Subscription::isPendingCancellation($subscription)) {
+            return ApiResponse::error(
+                'Subscription is already scheduled to cancel at the end of the billing period',
+                'ALREADY_PENDING_CANCELLATION',
+                400,
+            );
+        }
+
+        $atPeriodEnd = SettingsHelper::getCancelAtPeriodEnd();
+
+        if (!Subscription::applyCancellation($subscriptionId, $atPeriodEnd)) {
             return ApiResponse::error('Failed to cancel subscription', 'CANCEL_SUBSCRIPTION_FAILED', 500);
         }
 
-        // Suspend the linked server when admin cancels
         $serverUuid = $subscription['server_uuid'] ?? null;
-        if ($serverUuid && SettingsHelper::getSuspendServers()) {
+        if (!$atPeriodEnd && $serverUuid && SettingsHelper::getSuspendServers()) {
             try {
                 $server = Server::getServerByUuid($serverUuid);
                 if ($server) {
@@ -304,11 +310,19 @@ class SubscriptionsController
         Activity::createActivity([
             'user_uuid' => $admin['uuid'] ?? null,
             'name' => 'billingplans_admin_cancel_subscription',
-            'context' => "Admin cancelled subscription #$subscriptionId (user: {$subscription['user_id']}, plan: {$subscription['plan_name']})" . ($serverUuid ? " — server $serverUuid suspended" : ''),
+            'context' => "Admin cancelled subscription #$subscriptionId (user: {$subscription['user_id']}, plan: {$subscription['plan_name']})" .
+                ($atPeriodEnd
+                    ? " — active until {$subscription['next_renewal_at']}"
+                    : ($serverUuid ? " — server $serverUuid suspended immediately" : '')),
             'ip_address' => CloudFlareRealIP::getRealIP(),
         ]);
 
-        return ApiResponse::success([], 'Subscription cancelled successfully', 200);
+        return ApiResponse::success([
+            'cancel_at_period_end' => $atPeriodEnd,
+            'active_until' => $atPeriodEnd ? ($subscription['next_renewal_at'] ?? null) : null,
+        ], $atPeriodEnd
+            ? 'Subscription will cancel at the end of the current billing period'
+            : 'Subscription cancelled successfully', 200);
     }
 
     #[OA\Get(
@@ -391,6 +405,8 @@ class SubscriptionsController
                 $row['server_name'] = (string) ($server['name'] ?? '');
             }
         }
+
+        $row['pending_cancellation'] = Subscription::isPendingCancellation($row);
 
         return $row;
     }
