@@ -7,6 +7,7 @@ import {
   ShieldAlert, BarChart3, ToggleLeft, ToggleRight, ServerOff, Server, FileText,
   Mail, Clock, ChevronDown, ArrowLeft,
   Package, Infinity, FolderOpen, Tag, ExternalLink, CircleDollarSign, Ticket,
+  Globe, Copy, Link2,
 } from "lucide-vue-next";
 import {
   useAdminPlansAPI, type Plan, type PlanFormData, type PlanOptions,
@@ -86,6 +87,7 @@ const settingsForm = ref<BillingPlanSettings>({
   suspend_servers: true, unsuspend_on_renewal: true, grace_period_days: 0,
   termination_days: 0, send_suspension_email: true, send_termination_email: true,
   allow_user_cancellation: true, cancel_at_period_end: true, generate_invoices: true,
+  plans_public_enabled: false, max_plans_per_user: 0,
 });
 const planOptions = ref<PlanOptions>({ plans: [], nodes: [], realms: [], spells: [], categories: [] });
 
@@ -440,6 +442,20 @@ const loadSettings = async () => {
     const s = await getSettings(); settings.value = s; settingsForm.value = { ...s };
   } catch (e) { toast.error(e instanceof Error ? e.message : "Failed to load settings"); }
 };
+
+const publicPlansUrl = computed(() => {
+  if (typeof window === "undefined") return "/billing/plans";
+  return `${window.location.origin}/billing/plans`;
+});
+const copyPublicPlansUrl = async () => {
+  try {
+    await navigator.clipboard.writeText(publicPlansUrl.value);
+    toast.success("Public plans URL copied");
+  } catch {
+    toast.error("Failed to copy URL");
+  }
+};
+
 const saveSettings = async () => {
   try {
     const u = await updateSettings(settingsForm.value); settings.value = u; settingsForm.value = { ...u };
@@ -1949,6 +1965,56 @@ watch(
         <div class="max-w-3xl space-y-6">
 
 
+          <div class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+            <div class="flex items-center gap-3 px-5 py-3.5 border-b border-border bg-muted/30">
+              <div class="rounded-md bg-emerald-500/10 p-1.5"><Globe class="h-4 w-4 text-emerald-500" /></div>
+              <div>
+                <h3 class="text-sm font-semibold">Public Access</h3>
+                <p class="text-xs text-muted-foreground">Let guests browse plans without logging in</p>
+              </div>
+            </div>
+            <div class="divide-y divide-border">
+              <div class="flex items-center justify-between gap-4 px-5 py-4">
+                <div>
+                  <p class="text-sm font-medium">Make plans page public</p>
+                  <p class="text-xs text-muted-foreground mt-0.5">
+                    Guests can view <code class="text-[11px] bg-muted px-1 py-0.5 rounded">/billing/plans</code> without login.
+                    Subscribing still requires an account.
+                  </p>
+                </div>
+                <button type="button" @click="settingsForm.plans_public_enabled = !settingsForm.plans_public_enabled" class="shrink-0">
+                  <ToggleRight v-if="settingsForm.plans_public_enabled" class="h-8 w-8 text-primary" />
+                  <ToggleLeft v-else class="h-8 w-8 text-muted-foreground" />
+                </button>
+              </div>
+              <div v-if="settingsForm.plans_public_enabled" class="px-5 py-4 space-y-3">
+                <div class="flex items-start gap-2 text-xs text-muted-foreground">
+                  <Link2 class="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span>Share this public catalog URL with customers:</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <code class="flex-1 truncate rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-foreground">{{ publicPlansUrl }}</code>
+                  <button
+                    type="button"
+                    @click="copyPublicPlansUrl"
+                    class="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium hover:bg-accent transition-colors shrink-0"
+                  >
+                    <Copy class="h-3.5 w-3.5" />Copy
+                  </button>
+                  <a
+                    :href="publicPlansUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium hover:bg-accent transition-colors shrink-0"
+                  >
+                    <ExternalLink class="h-3.5 w-3.5" />Open
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+
+
           <div class="bg-card border border-border rounded-xl shadow-sm p-5">
             <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-4">Billing Lifecycle</p>
             <div class="flex items-center gap-1 flex-wrap text-xs font-mono">
@@ -2041,6 +2107,35 @@ watch(
                   <div class="flex items-center gap-2 shrink-0">
                     <input v-model.number="settingsForm.termination_days" type="number" min="0" max="365" class="flex h-9 w-20 rounded-lg border border-input bg-background px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-ring" />
                     <span class="text-xs text-muted-foreground w-16">{{ settingsForm.termination_days === 0 ? 'Disabled' : settingsForm.termination_days + ' day(s)' }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+
+          <div class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+            <div class="flex items-center gap-3 px-5 py-3.5 border-b border-border bg-muted/30">
+              <div class="rounded-md bg-cyan-500/10 p-1.5"><Users class="h-4 w-4 text-cyan-400" /></div>
+              <div>
+                <h3 class="text-sm font-semibold">Subscription Limits</h3>
+                <p class="text-xs text-muted-foreground">Cap how many plans a single user can hold</p>
+              </div>
+            </div>
+            <div class="divide-y divide-border">
+              <div class="px-5 py-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <p class="text-sm font-medium">Max plans per user</p>
+                    <p class="text-xs text-muted-foreground mt-0.5">
+                      Maximum number of <strong>active or suspended</strong> plan subscriptions a user may have at once.
+                      Changing plans (upgrade/downgrade) does not count as a new subscription.
+                      Set to <strong>0</strong> for unlimited.
+                    </p>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <input v-model.number="settingsForm.max_plans_per_user" type="number" min="0" max="9999" class="flex h-9 w-20 rounded-lg border border-input bg-background px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-ring" />
+                    <span class="text-xs text-muted-foreground w-16">{{ settingsForm.max_plans_per_user === 0 ? 'Unlimited' : settingsForm.max_plans_per_user + ' max' }}</span>
                   </div>
                 </div>
               </div>

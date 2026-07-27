@@ -20,6 +20,7 @@ use App\Permissions;
 use App\Helpers\ApiResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\RouteCollection;
+use App\Addons\billingplans\Controllers\Public\PublicPlansController;
 use App\Addons\billingplans\Controllers\User\PlansController as UserPlansController;
 use App\Addons\billingplans\Controllers\Admin\PlansController as AdminPlansController;
 use App\Addons\billingplans\Controllers\Admin\CouponsController as AdminCouponsController;
@@ -30,6 +31,36 @@ use App\Addons\billingplans\Controllers\User\SubscriptionsController as UserSubs
 use App\Addons\billingplans\Controllers\Admin\SubscriptionsController as AdminSubscriptionsController;
 
 return function (RouteCollection $routes): void {
+
+    App::getInstance(true)->registerApiRoute(
+        $routes,
+        'billingplans-public-config',
+        '/api/billingplans/public-config',
+        function (Request $request) {
+            return (new PublicPlansController())->config($request);
+        },
+        ['GET']
+    );
+
+    App::getInstance(true)->registerApiRoute(
+        $routes,
+        'billingplans-public-plans-list',
+        '/api/billingplans/plans',
+        function (Request $request) {
+            return (new PublicPlansController())->listPlans($request);
+        },
+        ['GET']
+    );
+
+    App::getInstance(true)->registerApiRoute(
+        $routes,
+        'billingplans-public-categories-list',
+        '/api/billingplans/categories',
+        function (Request $request) {
+            return (new PublicPlansController())->listCategories($request);
+        },
+        ['GET']
+    );
 
     App::getInstance(true)->registerAuthRoute(
         $routes,

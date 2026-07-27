@@ -12,6 +12,9 @@ export interface BillingPlanSettings {
   allow_user_cancellation: boolean;
   cancel_at_period_end: boolean;
   generate_invoices: boolean;
+  plans_public_enabled: boolean;
+  /** Max active plan subscriptions per user. 0 = unlimited. */
+  max_plans_per_user: number;
 }
 
 export function useSettingsAPI() {

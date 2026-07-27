@@ -130,10 +130,13 @@ export function useAdminCategoriesAPI() {
 export function useUserCategoriesAPI() {
   const loading = ref(false);
 
-  const listCategories = async (): Promise<Category[]> => {
+  const listCategories = async (opts?: { public?: boolean }): Promise<Category[]> => {
     loading.value = true;
     try {
-      const res = await axios.get("/api/user/billingplans/categories");
+      const endpoint = opts?.public
+        ? "/api/billingplans/categories"
+        : "/api/user/billingplans/categories";
+      const res = await axios.get(endpoint);
       return res.data.data ?? [];
     } catch (e) {
       const err = e as AxiosError<{ message?: string }>;

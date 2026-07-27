@@ -1,0 +1,22 @@
+{
+  "pages": [
+    {
+      "path": "/billing/plans",
+      "name": "Billing Plans",
+      "component": "/billingplans/dist/client.html",
+      "query": {
+        "public": "1"
+      },
+      "fallbackPath": "/dashboard/billing/plans",
+      "nav": {
+        "label": "Plans",
+        "order": 30
+      },
+      "enabled": {
+        "type": "plugin_setting",
+        "key": "plans_public_enabled",
+        "equals": "true"
+      }
+    }
+  ]
+}

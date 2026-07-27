@@ -259,16 +259,25 @@ export function useAdminPlansAPI() {
 export function useUserPlansAPI() {
   const loading = ref(false);
 
-  const listPlans = async (): Promise<{
+  const listPlans = async (opts?: { public?: boolean }): Promise<{
     data: Plan[];
     user_credits: number;
+    max_plans_per_user: number;
+    user_active_plan_count: number;
+    can_subscribe_more: boolean;
   }> => {
     loading.value = true;
     try {
-      const res = await axios.get("/api/user/billingplans/plans");
+      const endpoint = opts?.public
+        ? "/api/billingplans/plans"
+        : "/api/user/billingplans/plans";
+      const res = await axios.get(endpoint);
       return {
         data: res.data.data.data ?? [],
         user_credits: res.data.data.user_credits ?? 0,
+        max_plans_per_user: Number(res.data.data.max_plans_per_user ?? 0),
+        user_active_plan_count: Number(res.data.data.user_active_plan_count ?? 0),
+        can_subscribe_more: res.data.data.can_subscribe_more !== false,
       };
     } catch (e) {
       const err = e as AxiosError<{ message?: string }>;
@@ -282,6 +291,7 @@ export function useUserPlansAPI() {
     planId: number,
     options?: {
       server_name?: string;
+      chosen_location_id?: number | null;
       chosen_realm_id?: number | null;
       chosen_spell_id?: number | null;
       coupon_code?: string | null;
@@ -303,6 +313,8 @@ export function useUserPlansAPI() {
     try {
       const body: Record<string, unknown> = {};
       if (options?.server_name) body.server_name = options.server_name;
+      if (options?.chosen_location_id)
+        body.chosen_location_id = options.chosen_location_id;
       if (options?.chosen_realm_id)
         body.chosen_realm_id = options.chosen_realm_id;
       if (options?.chosen_spell_id)

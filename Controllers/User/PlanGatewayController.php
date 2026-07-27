@@ -20,8 +20,10 @@ namespace App\Addons\billingplans\Controllers\User;
 use App\Helpers\ApiResponse;
 use App\Addons\billingplans\Chat\Plan;
 use Symfony\Component\HttpFoundation\Request;
+use App\Addons\billingplans\Chat\Subscription;
 use Symfony\Component\HttpFoundation\Response;
 use App\Addons\billingplans\Chat\GatewayCheckout;
+use App\Addons\billingplans\Helpers\SettingsHelper;
 use App\Addons\billingplans\Helpers\PlanGatewayPaymentHelper;
 
 class PlanGatewayController
@@ -64,6 +66,20 @@ class PlanGatewayController
         $plan = Plan::getById($planId);
         if ($plan === null || (int) ($plan['is_active'] ?? 0) !== 1) {
             return ApiResponse::error('Plan not found', 'PLAN_NOT_FOUND', 404);
+        }
+
+        $maxPlansPerUser = SettingsHelper::getMaxPlansPerUser();
+        if ($maxPlansPerUser > 0) {
+            $userActivePlanCount = count(Subscription::getActiveByUserId($userId));
+            if ($userActivePlanCount >= $maxPlansPerUser) {
+                return ApiResponse::error(
+                    'You have reached the maximum number of active plan subscriptions (' .
+                        $maxPlansPerUser .
+                        ').',
+                    'MAX_PLANS_REACHED',
+                    400,
+                );
+            }
         }
 
         try {

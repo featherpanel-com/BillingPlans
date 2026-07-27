@@ -54,6 +54,7 @@ class SettingsController
                     new OA\Property(property: 'send_suspension_email', type: 'boolean', description: 'Email user on suspension'),
                     new OA\Property(property: 'allow_user_cancellation', type: 'boolean', description: 'Allow users to cancel subscriptions themselves'),
                     new OA\Property(property: 'cancel_at_period_end', type: 'boolean', description: 'Keep server running until billing period ends when cancelled'),
+                    new OA\Property(property: 'max_plans_per_user', type: 'integer', minimum: 0, description: 'Max active plan subscriptions per user (0 = unlimited)'),
                 ]
             )
         ),
@@ -113,6 +114,18 @@ class SettingsController
 
         if (isset($data['generate_invoices'])) {
             SettingsHelper::setGenerateInvoices((bool) filter_var($data['generate_invoices'], FILTER_VALIDATE_BOOLEAN));
+        }
+
+        if (isset($data['plans_public_enabled'])) {
+            SettingsHelper::setPlansPublicEnabled((bool) filter_var($data['plans_public_enabled'], FILTER_VALIDATE_BOOLEAN));
+        }
+
+        if (isset($data['max_plans_per_user'])) {
+            $maxPlans = (int) $data['max_plans_per_user'];
+            if ($maxPlans < 0) {
+                return ApiResponse::error('max_plans_per_user must be >= 0', 'INVALID_MAX_PLANS_PER_USER', 400);
+            }
+            SettingsHelper::setMaxPlansPerUser($maxPlans);
         }
 
         Activity::createActivity([

@@ -40,6 +40,7 @@ use App\Addons\billingredeem\Chat\RedeemUsage;
 use Symfony\Component\HttpFoundation\Response;
 use App\Addons\billingcore\Helpers\CreditsHelper;
 use App\Addons\billingplans\Helpers\InvoiceHelper;
+use App\Addons\billingplans\Helpers\SettingsHelper;
 
 class PlansController
 {
@@ -55,7 +56,7 @@ class PlansController
             $plans,
         );
         $preloaded = [
-            'activeCounts' => $this->getActiveSubscriptionCounts($planIds),
+            'activeCounts' => $this->getActiveSubscriptionCountsPublic($planIds),
             'allRealms' => Realm::getAll(null, 500, 0) ?: [],
             'allSpells' => Spell::getAllSpells() ?: [],
             'realmById' => [],
@@ -64,7 +65,7 @@ class PlansController
         $categoryCache = [];
 
         foreach ($plans as &$plan) {
-            $plan = $this->hydratePlan(
+            $plan = $this->hydratePlanPublic(
                 $plan,
                 $userCredits,
                 $categoryCache,
@@ -72,10 +73,18 @@ class PlansController
             );
         }
 
+        $maxPlansPerUser = SettingsHelper::getMaxPlansPerUser();
+        $userActivePlanCount = count(Subscription::getActiveByUserId($userId));
+        $canSubscribeMore =
+            $maxPlansPerUser === 0 || $userActivePlanCount < $maxPlansPerUser;
+
         return ApiResponse::success(
             [
                 'data' => array_values($plans),
                 'user_credits' => $userCredits,
+                'max_plans_per_user' => $maxPlansPerUser,
+                'user_active_plan_count' => $userActivePlanCount,
+                'can_subscribe_more' => $canSubscribeMore,
             ],
             'Plans retrieved successfully',
             200,
@@ -105,7 +114,7 @@ class PlansController
             'realmById' => [],
             'spellById' => [],
         ];
-        $plan = $this->hydratePlan($plan, $userCredits, $cache, $preloaded);
+        $plan = $this->hydratePlanPublic($plan, $userCredits, $cache, $preloaded);
 
         return ApiResponse::success($plan, 'Plan retrieved successfully', 200);
     }
@@ -195,6 +204,20 @@ class PlansController
         $plan = Plan::getById($planId);
         if ($plan === null || (int) ($plan['is_active'] ?? 0) !== 1) {
             return ApiResponse::error('Plan not found', 'PLAN_NOT_FOUND', 404);
+        }
+
+        $maxPlansPerUser = SettingsHelper::getMaxPlansPerUser();
+        if ($maxPlansPerUser > 0) {
+            $userActivePlanCount = count(Subscription::getActiveByUserId($userId));
+            if ($userActivePlanCount >= $maxPlansPerUser) {
+                return ApiResponse::error(
+                    'You have reached the maximum number of active plan subscriptions (' .
+                        $maxPlansPerUser .
+                        ').',
+                    'MAX_PLANS_REACHED',
+                    400,
+                );
+            }
         }
 
         $customResources =
@@ -423,6 +446,37 @@ class PlansController
             }
         }
 
+        $chosenLocationId = null;
+        $planLocationData = $this->resolvePlanLocations($plan);
+        $availableLocationIds = $planLocationData['ids'];
+        if (!empty($availableLocationIds) && $planExpectsServer) {
+            $chosenLocationId = isset($input['chosen_location_id'])
+                ? (int) $input['chosen_location_id']
+                : null;
+            if (!$chosenLocationId) {
+                if (!$skipInitialCharge) {
+                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
+                }
+
+                return ApiResponse::error(
+                    'Please select a location for your server.',
+                    'LOCATION_REQUIRED',
+                    400,
+                );
+            }
+            if (!in_array($chosenLocationId, $availableLocationIds, true)) {
+                if (!$skipInitialCharge) {
+                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
+                }
+
+                return ApiResponse::error(
+                    'The selected location is not available for this plan.',
+                    'LOCATION_NOT_ALLOWED',
+                    400,
+                );
+            }
+        }
+
         $serverUuid = null;
         if ($effectiveSpellId && $effectiveRealmId) {
             $planForProvision = $plan;
@@ -432,6 +486,7 @@ class PlansController
                 $planForProvision,
                 $user,
                 $input['server_name'] ?? null,
+                $chosenLocationId,
             );
             if ($serverResult['success']) {
                 $serverUuid = $serverResult['uuid'];
@@ -565,6 +620,157 @@ class PlansController
     }
 
     /**
+     * @param array<string,mixed> $plan
+     * @param array<int,array<string,mixed>|null> $categoryCache
+     * @param array{
+     *   activeCounts: array<int,int>,
+     *   allRealms: array<int,array<string,mixed>>,
+     *   allSpells: array<int,array<string,mixed>>,
+     *   realmById: array<int,array<string,mixed>|null>,
+     *   spellById: array<int,array<string,mixed>|null>
+     * } $preloaded
+     *
+     * @return array<string,mixed>
+     */
+    public function hydratePlanPublic(
+        array $plan,
+        int $userCredits,
+        array &$categoryCache,
+        array &$preloaded,
+    ): array {
+        $plan['billing_period_label'] = Plan::getBillingPeriodLabel(
+            (int) ($plan['billing_period_days'] ?? 30),
+        );
+        $breakdown = Plan::calculateChargeBreakdown($plan);
+        $plan['base_credits'] = (int) $breakdown['base_credits'];
+        $plan['tax_rate_percent'] = (float) $breakdown['tax_rate_percent'];
+        $plan['tax_credits'] = (int) $breakdown['tax_credits'];
+        $plan['extra_charge_percent'] =
+            (float) $breakdown['extra_charge_percent'];
+        $plan['extra_charge_name'] = $breakdown['extra_charge_name'];
+        $plan['extra_charge_credits'] =
+            (int) $breakdown['extra_charge_credits'];
+        $plan['total_credits'] = (int) $breakdown['total_credits'];
+        $plan['can_afford'] = $userCredits >= (int) $breakdown['total_credits'];
+        $plan['has_server_template'] =
+            (!empty($plan['realms_id'])
+                || !empty($plan['user_can_choose_realm']))
+            && (!empty($plan['spell_id'])
+                || !empty($plan['user_can_choose_spell']));
+
+        $planId = (int) ($plan['id'] ?? 0);
+        $activeSubscriptionCount =
+            (int) ($preloaded['activeCounts'][$planId] ?? 0);
+        $plan['active_subscription_count'] = $activeSubscriptionCount;
+
+        $maxSubscriptions =
+            isset($plan['max_subscriptions'])
+            && $plan['max_subscriptions'] !== null
+                ? (int) $plan['max_subscriptions']
+                : null;
+        $plan['slots_available'] =
+            $maxSubscriptions === null
+                ? null
+                : max(0, $maxSubscriptions - $activeSubscriptionCount);
+        $plan['is_sold_out'] =
+            $maxSubscriptions !== null
+            && $maxSubscriptions > 0
+            && $activeSubscriptionCount >= $maxSubscriptions;
+
+        $plan['user_can_choose_realm'] =
+            (bool) ($plan['user_can_choose_realm'] ?? false);
+        $plan['user_can_choose_spell'] =
+            (bool) ($plan['user_can_choose_spell'] ?? false);
+
+        if (
+            isset($plan['slider_config'])
+            && is_string($plan['slider_config'])
+        ) {
+            $plan['slider_config'] = json_decode($plan['slider_config'], true);
+        }
+
+        $allowedRealmIds = Plan::decodeIds($plan['allowed_realms'] ?? null);
+        $allowedSpellIds = Plan::decodeIds($plan['allowed_spells'] ?? null);
+
+        $plan['allowed_realms_options'] = $this->resolveRealmOptions(
+            $plan,
+            $allowedRealmIds,
+            $preloaded,
+        );
+        $plan['allowed_spells_options'] = $this->resolveSpellOptions(
+            $plan,
+            $allowedSpellIds,
+            $plan['allowed_realms_options'],
+            $preloaded,
+        );
+        $plan['allowed_upgrade_plan_ids'] = Plan::decodeIds(
+            $plan['allowed_upgrade_plan_ids'] ?? null,
+        );
+        $plan['allowed_downgrade_plan_ids'] = Plan::decodeIds(
+            $plan['allowed_downgrade_plan_ids'] ?? null,
+        );
+        $locationData = $this->resolvePlanLocations($plan);
+        $plan['location_ids'] = $locationData['ids'];
+        $plan['location_names'] = $locationData['names'];
+
+        $categoryId = (int) ($plan['category_id'] ?? 0);
+        if ($categoryId > 0) {
+            if (!array_key_exists($categoryId, $categoryCache)) {
+                $cat = Category::getById($categoryId);
+                $categoryCache[$categoryId] = $cat
+                    ? [
+                        'id' => (int) $cat['id'],
+                        'name' => $cat['name'],
+                        'icon' => $cat['icon'],
+                        'color' => $cat['color'],
+                    ]
+                    : null;
+            }
+            $plan['category'] = $categoryCache[$categoryId];
+        } else {
+            $plan['category'] = null;
+        }
+
+        return $plan;
+    }
+
+    /**
+     * @param int[] $planIds
+     *
+     * @return array<int,int>
+     */
+    public function getActiveSubscriptionCountsPublic(array $planIds): array
+    {
+        $planIds = array_values(
+            array_filter(
+                array_map('intval', $planIds),
+                static fn (int $id): bool => $id > 0,
+            ),
+        );
+        if (empty($planIds)) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($planIds), '?'));
+        $pdo = Database::getPdoConnection();
+        $stmt = $pdo->prepare(
+            "SELECT plan_id, COUNT(*) AS count
+             FROM featherpanel_billingplans_subscriptions
+             WHERE plan_id IN ({$placeholders}) AND status IN ('active','suspended','pending')
+             GROUP BY plan_id",
+        );
+        $stmt->execute($planIds);
+        $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+
+        $counts = [];
+        foreach ($rows as $row) {
+            $counts[(int) $row['plan_id']] = (int) $row['count'];
+        }
+
+        return $counts;
+    }
+
+    /**
      * Provision a server based on the plan template.
      *
      * @param array<string,mixed> $plan
@@ -576,6 +782,7 @@ class PlansController
         array $plan,
         array $user,
         ?string $customName,
+        ?int $chosenLocationId = null,
     ): array {
         $app = App::getInstance(false, true);
         $userId = (int) $user['id'];
@@ -620,6 +827,20 @@ class PlansController
                     static fn ($n) => (int) $n['id'],
                     $allNodes,
                 );
+            }
+
+            if ($chosenLocationId !== null && $chosenLocationId > 0) {
+                $nodeIds = $this->filterNodeIdsByLocation(
+                    $nodeIds,
+                    $chosenLocationId,
+                );
+                if (empty($nodeIds)) {
+                    return [
+                        'success' => false,
+                        'error' => 'No selected node is available in the chosen location.',
+                        'code' => 'NO_AVAILABLE_NODE',
+                    ];
+                }
             }
 
             $nodeId = $this->resolveProvisionNode($nodeIds, $requirements);
@@ -892,121 +1113,6 @@ class PlansController
     }
 
     /**
-     * @param array<string,mixed> $plan
-     * @param array<int,array<string,mixed>|null> $categoryCache
-     * @param array{
-     *   activeCounts: array<int,int>,
-     *   allRealms: array<int,array<string,mixed>>,
-     *   allSpells: array<int,array<string,mixed>>,
-     *   realmById: array<int,array<string,mixed>|null>,
-     *   spellById: array<int,array<string,mixed>|null>
-     * } $preloaded
-     *
-     * @return array<string,mixed>
-     */
-    private function hydratePlan(
-        array $plan,
-        int $userCredits,
-        array &$categoryCache,
-        array &$preloaded,
-    ): array {
-        $plan['billing_period_label'] = Plan::getBillingPeriodLabel(
-            (int) ($plan['billing_period_days'] ?? 30),
-        );
-        $breakdown = Plan::calculateChargeBreakdown($plan);
-        $plan['base_credits'] = (int) $breakdown['base_credits'];
-        $plan['tax_rate_percent'] = (float) $breakdown['tax_rate_percent'];
-        $plan['tax_credits'] = (int) $breakdown['tax_credits'];
-        $plan['extra_charge_percent'] =
-            (float) $breakdown['extra_charge_percent'];
-        $plan['extra_charge_name'] = $breakdown['extra_charge_name'];
-        $plan['extra_charge_credits'] =
-            (int) $breakdown['extra_charge_credits'];
-        $plan['total_credits'] = (int) $breakdown['total_credits'];
-        $plan['can_afford'] = $userCredits >= (int) $breakdown['total_credits'];
-        $plan['has_server_template'] =
-            (!empty($plan['realms_id'])
-                || !empty($plan['user_can_choose_realm']))
-            && (!empty($plan['spell_id'])
-                || !empty($plan['user_can_choose_spell']));
-
-        $planId = (int) ($plan['id'] ?? 0);
-        $activeSubscriptionCount =
-            (int) ($preloaded['activeCounts'][$planId] ?? 0);
-        $plan['active_subscription_count'] = $activeSubscriptionCount;
-
-        $maxSubscriptions =
-            isset($plan['max_subscriptions'])
-            && $plan['max_subscriptions'] !== null
-                ? (int) $plan['max_subscriptions']
-                : null;
-        $plan['slots_available'] =
-            $maxSubscriptions === null
-                ? null
-                : max(0, $maxSubscriptions - $activeSubscriptionCount);
-        $plan['is_sold_out'] =
-            $maxSubscriptions !== null
-            && $maxSubscriptions > 0
-            && $activeSubscriptionCount >= $maxSubscriptions;
-
-        $plan['user_can_choose_realm'] =
-            (bool) ($plan['user_can_choose_realm'] ?? false);
-        $plan['user_can_choose_spell'] =
-            (bool) ($plan['user_can_choose_spell'] ?? false);
-
-        if (
-            isset($plan['slider_config'])
-            && is_string($plan['slider_config'])
-        ) {
-            $plan['slider_config'] = json_decode($plan['slider_config'], true);
-        }
-
-        $allowedRealmIds = Plan::decodeIds($plan['allowed_realms'] ?? null);
-        $allowedSpellIds = Plan::decodeIds($plan['allowed_spells'] ?? null);
-
-        $plan['allowed_realms_options'] = $this->resolveRealmOptions(
-            $plan,
-            $allowedRealmIds,
-            $preloaded,
-        );
-        $plan['allowed_spells_options'] = $this->resolveSpellOptions(
-            $plan,
-            $allowedSpellIds,
-            $plan['allowed_realms_options'],
-            $preloaded,
-        );
-        $plan['allowed_upgrade_plan_ids'] = Plan::decodeIds(
-            $plan['allowed_upgrade_plan_ids'] ?? null,
-        );
-        $plan['allowed_downgrade_plan_ids'] = Plan::decodeIds(
-            $plan['allowed_downgrade_plan_ids'] ?? null,
-        );
-        $locationData = $this->resolvePlanLocations($plan);
-        $plan['location_ids'] = $locationData['ids'];
-        $plan['location_names'] = $locationData['names'];
-
-        $categoryId = (int) ($plan['category_id'] ?? 0);
-        if ($categoryId > 0) {
-            if (!array_key_exists($categoryId, $categoryCache)) {
-                $cat = Category::getById($categoryId);
-                $categoryCache[$categoryId] = $cat
-                    ? [
-                        'id' => (int) $cat['id'],
-                        'name' => $cat['name'],
-                        'icon' => $cat['icon'],
-                        'color' => $cat['color'],
-                    ]
-                    : null;
-            }
-            $plan['category'] = $categoryCache[$categoryId];
-        } else {
-            $plan['category'] = null;
-        }
-
-        return $plan;
-    }
-
-    /**
      * Resolve unique location IDs and labels for the plan's configured nodes.
      *
      * @param array<string,mixed> $plan
@@ -1187,42 +1293,6 @@ class PlansController
         }
 
         return array_values($options);
-    }
-
-    /**
-     * @param int[] $planIds
-     *
-     * @return array<int,int>
-     */
-    private function getActiveSubscriptionCounts(array $planIds): array
-    {
-        $planIds = array_values(
-            array_filter(
-                array_map('intval', $planIds),
-                static fn (int $id): bool => $id > 0,
-            ),
-        );
-        if (empty($planIds)) {
-            return [];
-        }
-
-        $placeholders = implode(',', array_fill(0, count($planIds), '?'));
-        $pdo = Database::getPdoConnection();
-        $stmt = $pdo->prepare(
-            "SELECT plan_id, COUNT(*) AS count
-             FROM featherpanel_billingplans_subscriptions
-             WHERE plan_id IN ({$placeholders}) AND status IN ('active','suspended','pending')
-             GROUP BY plan_id",
-        );
-        $stmt->execute($planIds);
-        $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
-
-        $counts = [];
-        foreach ($rows as $row) {
-            $counts[(int) $row['plan_id']] = (int) $row['count'];
-        }
-
-        return $counts;
     }
 
     /**

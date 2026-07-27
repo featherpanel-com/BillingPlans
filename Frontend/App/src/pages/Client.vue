@@ -12,6 +12,11 @@ import { useUserSubscriptionsAPI, type Subscription } from "@/composables/useSub
 import { useUserCategoriesAPI, type Category, colorClasses } from "@/composables/useCategoriesAPI";
 
 const toast = useToast();
+const isPublicMode = ref(
+  typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("public") === "1"
+);
+
 const { loading: plansLoading, listPlans, subscribeToPlan, validateCoupon } = useUserPlansAPI();
 const { loading: subsLoading, listSubscriptions, cancelSubscription, changeSubscriptionPlan } = useUserSubscriptionsAPI();
 const { listCategories } = useUserCategoriesAPI();
@@ -25,9 +30,11 @@ const subscriptions = ref<Subscription[]>([]);
 const cancelAtPeriodEnd = ref(true);
 const categories = ref<Category[]>([]);
 const activeCategoryId = ref<number | null>(null);
-const activeLocationId = ref<number | null>(null);
 const searchQuery = ref("");
 const userCredits = ref(0);
+const maxPlansPerUser = ref(0);
+const userActivePlanCount = ref(0);
+const canSubscribeMore = ref(true);
 
 
 const planToSubscribe = ref<Plan | null>(null);
@@ -41,6 +48,7 @@ const couponPreview = ref<{
 const couponError = ref<string | null>(null);
 const validatingCoupon = ref(false);
 let couponValidateTimer: ReturnType<typeof setTimeout> | null = null;
+const chosenLocationId = ref<number | null>(null);
 const chosenRealmId = ref<number | null>(null);
 const chosenSpellId = ref<number | null>(null);
 const subscribing = ref(false);
@@ -78,11 +86,36 @@ function fmtMB(mb: number) {
   return mb >= 1024 ? (mb / 1024).toFixed(1).replace(/\.0$/, "") + " GB" : mb + " MB";
 }
 
+const redirectToLoginForPlans = () => {
+  const target = "/auth/login?redirect=" + encodeURIComponent("/dashboard/billing/plans");
+  if (window.top && window.top !== window) {
+    window.top.location.href = target;
+  } else {
+    window.location.href = target;
+  }
+};
+
 const loadData = async () => {
   try {
+    if (isPublicMode.value) {
+      const [pr, cats] = await Promise.all([
+        listPlans({ public: true }),
+        listCategories({ public: true }),
+      ]);
+      plans.value = pr.data;
+      userCredits.value = 0;
+      subscriptions.value = [];
+      categories.value = cats;
+      activeTab.value = "browse";
+      return;
+    }
+
     const [pr, sr, cats] = await Promise.all([listPlans(), listSubscriptions(), listCategories()]);
     plans.value = pr.data;
     userCredits.value = pr.user_credits;
+    maxPlansPerUser.value = pr.max_plans_per_user;
+    userActivePlanCount.value = pr.user_active_plan_count;
+    canSubscribeMore.value = pr.can_subscribe_more;
     subscriptions.value = sr.data;
     cancelAtPeriodEnd.value = sr.cancel_at_period_end;
     categories.value = cats;
@@ -95,41 +128,22 @@ const filteredPlans = computed(() => {
   const query = searchQuery.value.trim().toLowerCase();
   return plans.value.filter((p) => {
     if (activeCategoryId.value !== null && p.category_id !== activeCategoryId.value) return false;
-    if (activeLocationId.value !== null) {
-      const locations = Array.isArray(p.location_ids) ? p.location_ids : [];
-      if (!locations.includes(activeLocationId.value)) return false;
-    }
     if (!query) return true;
     const haystack = `${p.name} ${p.description ?? ""} ${p.long_description ?? ""}`.toLowerCase();
     return haystack.includes(query);
   });
 });
 
-const availableLocationIds = computed<number[]>(() => {
-  const ids = new Set<number>();
-  for (const plan of plans.value) {
-    const locations = Array.isArray(plan.location_ids) ? plan.location_ids : [];
-    for (const locationId of locations) ids.add(locationId);
-  }
-  return Array.from(ids).sort((a, b) => a - b);
-});
-
-const locationOptions = computed<Array<{ id: number; label: string }>>(() => {
-  const labels = new Map<number, string>();
-  for (const plan of plans.value) {
-    const locationIds = Array.isArray(plan.location_ids) ? plan.location_ids : [];
-    const locationNames = plan.location_names ?? {};
-    for (const locationId of locationIds) {
-      const rawLabel = locationNames[String(locationId)];
-      const label = typeof rawLabel === "string" ? rawLabel.trim() : "";
-      if (label && !labels.has(locationId)) labels.set(locationId, label);
-    }
-  }
-
-  return availableLocationIds.value.map((id) => ({
-    id,
-    label: labels.get(id) ?? `Location #${id}`,
-  }));
+const subscribeLocationOptions = computed<Array<{ id: number; label: string }>>(() => {
+  const plan = planToSubscribe.value;
+  if (!plan) return [];
+  const locationIds = Array.isArray(plan.location_ids) ? plan.location_ids : [];
+  const locationNames = plan.location_names ?? {};
+  return locationIds.map((id) => {
+    const rawLabel = locationNames[String(id)];
+    const label = typeof rawLabel === "string" ? rawLabel.trim() : "";
+    return { id, label: label || `Location #${id}` };
+  });
 });
 
 function slugify(input: string): string {
@@ -263,6 +277,7 @@ const subscribeFilteredSpells = computed(() => {
 const canConfirmSubscribe = computed(() => {
   const p = planToSubscribe.value;
   if (!p) return false;
+  if (subscribeLocationOptions.value.length > 0 && chosenLocationId.value == null) return false;
   if (p.user_can_choose_realm && chosenRealmId.value == null) return false;
   if (p.user_can_choose_spell) {
     if (subscribeFilteredSpells.value.length === 0) return false;
@@ -286,6 +301,7 @@ const closeSubscribeFlow = () => {
   planToSubscribe.value = null;
   serverName.value = "";
   couponCode.value = "";
+  chosenLocationId.value = null;
   chosenRealmId.value = null;
   chosenSpellId.value = null;
 };
@@ -476,13 +492,32 @@ const startSubscribe = (plan: Plan) => {
     });
   }
 
+  if (isPublicMode.value) {
+    redirectToLoginForPlans();
+    return;
+  }
+
+  if (!canSubscribeMore.value) {
+    toast.error(
+      maxPlansPerUser.value > 0
+        ? `You can only have ${maxPlansPerUser.value} active plan subscription${maxPlansPerUser.value === 1 ? "" : "s"} at a time.`
+        : "You have reached the maximum number of active plan subscriptions."
+    );
+    return;
+  }
+
   planToSubscribe.value = plan;
   serverName.value = plan.name;
   couponCode.value = "";
   couponPreview.value = null;
   couponError.value = null;
+  chosenLocationId.value = null;
   chosenRealmId.value = null;
   chosenSpellId.value = null;
+  const planLocations = Array.isArray(plan.location_ids) ? plan.location_ids : [];
+  if (planLocations.length === 1) {
+    chosenLocationId.value = planLocations[0];
+  }
   if (plan.user_can_choose_realm && plan.allowed_realms_options?.length === 1) {
     chosenRealmId.value = plan.allowed_realms_options[0].id;
   }
@@ -493,12 +528,15 @@ const executeSubscribe = async () => {
   if (!planToSubscribe.value) return;
   subscribing.value = true;
   try {
+    const locationId =
+      chosenLocationId.value != null ? Number(chosenLocationId.value) : undefined;
     const realmId =
       chosenRealmId.value != null ? Number(chosenRealmId.value) : undefined;
     const spellId =
       chosenSpellId.value != null ? Number(chosenSpellId.value) : undefined;
     const result = await subscribeToPlan(planToSubscribe.value.id, {
       server_name: serverName.value.trim() || undefined,
+      chosen_location_id: locationId,
       chosen_realm_id: realmId,
       chosen_spell_id: spellId,
       coupon_code: couponCode.value.trim() || undefined,
@@ -730,6 +768,28 @@ watch(
         </div>
 
         <div
+          v-if="subscribeLocationOptions.length > 0"
+          class="bg-card border border-border rounded-xl shadow-sm p-5 space-y-3"
+        >
+          <div>
+            <label class="block text-xs font-medium text-muted-foreground mb-1.5">Location <span class="text-red-400">*</span></label>
+            <p class="text-xs text-muted-foreground mb-2">Where your server will be hosted.</p>
+            <div class="billing-select-wrap">
+              <select
+                v-model="chosenLocationId"
+                class="billing-select"
+              >
+                <option disabled :value="null">Select a location…</option>
+                <option v-for="loc in subscribeLocationOptions" :key="loc.id" :value="loc.id">
+                  {{ loc.label }}
+                </option>
+              </select>
+              <ChevronDown class="billing-select-icon" />
+            </div>
+          </div>
+        </div>
+
+        <div
           v-if="planToSubscribe.user_can_choose_realm && planToSubscribe.allowed_realms_options?.length"
           class="bg-card border border-border rounded-xl shadow-sm p-5 space-y-3"
         >
@@ -889,7 +949,7 @@ watch(
           <h1 class="text-2xl font-bold tracking-tight flex items-center gap-2 text-foreground">
             <CreditCard class="h-6 w-6 text-primary" />Billing Plans
           </h1>
-          <p class="text-sm text-muted-foreground mt-0.5">Subscribe to server plans billed in credits — same look as the admin billing tools.</p>
+          <p class="text-sm text-muted-foreground mt-0.5">{{ isPublicMode ? "Browse available server plans. Log in to subscribe." : "Subscribe to server plans billed in credits — same look as the admin billing tools." }}</p>
         </div>
         <button
           type="button"
@@ -903,8 +963,8 @@ watch(
       </div>
 
 
-      <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
-        <div class="bg-card border border-border rounded-xl p-4 shadow-sm">
+      <div class="grid gap-4 mb-6" :class="isPublicMode ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2 sm:grid-cols-3'">
+        <div v-if="!isPublicMode" class="bg-card border border-border rounded-xl p-4 shadow-sm">
           <div class="flex items-center justify-between mb-2">
             <p class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Balance</p>
             <div class="bg-primary/10 rounded-lg p-1.5"><CreditCard class="h-3.5 w-3.5 text-primary" /></div>
@@ -912,26 +972,28 @@ watch(
           <p class="text-2xl font-bold text-foreground tabular-nums">{{ userCredits.toLocaleString() }}</p>
           <p class="text-xs text-muted-foreground mt-0.5">credits available</p>
         </div>
-        <div class="bg-card border border-border rounded-xl p-4 shadow-sm">
+        <div v-if="!isPublicMode" class="bg-card border border-border rounded-xl p-4 shadow-sm">
           <div class="flex items-center justify-between mb-2">
             <p class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Active</p>
             <div class="bg-emerald-500/10 rounded-lg p-1.5"><CheckCircle2 class="h-3.5 w-3.5 text-emerald-500" /></div>
           </div>
-          <p class="text-2xl font-bold text-foreground">{{ activeSubscriptions.length }}</p>
-          <p class="text-xs text-muted-foreground mt-0.5">subscriptions</p>
+          <p class="text-2xl font-bold text-foreground">
+            {{ userActivePlanCount }}<span v-if="maxPlansPerUser > 0" class="text-base font-medium text-muted-foreground">/{{ maxPlansPerUser }}</span>
+          </p>
+          <p class="text-xs text-muted-foreground mt-0.5">{{ maxPlansPerUser > 0 ? 'plans used' : 'subscriptions' }}</p>
         </div>
-        <div class="hidden sm:block bg-card border border-border rounded-xl p-4 shadow-sm col-span-2 sm:col-span-1">
+        <div class="bg-card border border-border rounded-xl p-4 shadow-sm" :class="isPublicMode ? '' : 'hidden sm:block col-span-2 sm:col-span-1'">
           <div class="flex items-center justify-between mb-2">
             <p class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Plans</p>
             <div class="bg-blue-500/10 rounded-lg p-1.5"><BarChart3 class="h-3.5 w-3.5 text-blue-500" /></div>
           </div>
           <p class="text-2xl font-bold text-foreground">{{ plans.length }}</p>
-          <p class="text-xs text-muted-foreground mt-0.5">available to you</p>
+          <p class="text-xs text-muted-foreground mt-0.5">{{ isPublicMode ? "available plans" : "available to you" }}</p>
         </div>
       </div>
 
 
-      <div class="flex gap-1 mb-5 bg-muted/50 rounded-xl p-1 w-fit flex-wrap">
+      <div v-if="!isPublicMode" class="flex gap-1 mb-5 bg-muted/50 rounded-xl p-1 w-fit flex-wrap">
         <button
           type="button"
           @click="activeTab = 'browse'"
@@ -940,6 +1002,7 @@ watch(
           <ShoppingCart class="h-4 w-4" />Browse plans
         </button>
         <button
+          v-if="!isPublicMode"
           type="button"
           @click="activeTab = 'my-subscriptions'"
           :class="['inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all', activeTab === 'my-subscriptions' ? 'bg-card text-foreground shadow-sm border border-border' : 'text-muted-foreground hover:text-foreground']"
@@ -963,15 +1026,6 @@ watch(
             placeholder="Search plans..."
             class="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring w-full md:w-64"
           />
-          <div v-if="availableLocationIds.length > 0" class="billing-select-wrap w-full md:w-52">
-            <select v-model="activeLocationId" class="billing-select">
-              <option :value="null">All locations</option>
-              <option v-for="location in locationOptions" :key="location.id" :value="location.id">
-                {{ location.label }}
-              </option>
-            </select>
-            <ChevronDown class="billing-select-icon" />
-          </div>
         </div>
 
         <div v-if="categories.length > 0" class="flex gap-2 mb-5 flex-wrap">
@@ -1131,10 +1185,15 @@ watch(
               </div>
 
 
-              <div v-if="!plan.can_afford && !plan.is_sold_out"
+              <div v-if="!isPublicMode && !plan.can_afford && !plan.is_sold_out && canSubscribeMore"
                 class="flex items-center gap-2 text-xs text-amber-500 bg-amber-500/10 rounded-lg px-3 py-2 mb-3">
                 <AlertTriangle class="h-3.5 w-3.5 shrink-0" />
                 <span>Need {{ ((plan.total_credits ?? plan.price_credits) - userCredits).toLocaleString() }} more credits</span>
+              </div>
+              <div v-else-if="!isPublicMode && !canSubscribeMore && !plan.is_sold_out"
+                class="flex items-center gap-2 text-xs text-amber-500 bg-amber-500/10 rounded-lg px-3 py-2 mb-3">
+                <AlertTriangle class="h-3.5 w-3.5 shrink-0" />
+                <span>Limit reached ({{ userActivePlanCount }}/{{ maxPlansPerUser }} plans)</span>
               </div>
             </div>
 
@@ -1143,16 +1202,26 @@ watch(
               <div class="flex items-center gap-2">
                 <button
                   @click="startSubscribe(plan)"
-                  :disabled="!plan.can_afford || !!plan.is_sold_out"
+                  :disabled="!!plan.is_sold_out || (!isPublicMode && (!plan.can_afford || !canSubscribeMore))"
                   :class="[
                     'flex-1 inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors',
-                    plan.can_afford && !plan.is_sold_out
+                    (!plan.is_sold_out && (isPublicMode || (plan.can_afford && canSubscribeMore)))
                       ? 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm'
                       : 'bg-muted text-muted-foreground cursor-not-allowed',
                   ]"
                 >
                   <ShoppingCart class="h-4 w-4" />
-                  {{ plan.is_sold_out ? 'Sold Out' : !plan.can_afford ? 'Insufficient Credits' : 'Subscribe Now' }}
+                  {{
+                    plan.is_sold_out
+                      ? 'Sold Out'
+                      : isPublicMode
+                        ? 'Login to Subscribe'
+                        : !canSubscribeMore
+                          ? 'Limit Reached'
+                          : !plan.can_afford
+                            ? 'Insufficient Credits'
+                            : 'Subscribe Now'
+                  }}
                 </button>
                 <button
                   type="button"

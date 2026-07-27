@@ -135,6 +135,34 @@ class SettingsHelper
         self::set('generate_invoices', $value ? 'true' : 'false');
     }
 
+    /**
+     * Allow unauthenticated users to browse plans at /billing/plans.
+     * Subscribe / manage still requires login.
+     */
+    public static function getPlansPublicEnabled(): bool
+    {
+        return self::get('plans_public_enabled', 'false') === 'true';
+    }
+
+    public static function setPlansPublicEnabled(bool $value): void
+    {
+        self::set('plans_public_enabled', $value ? 'true' : 'false');
+    }
+
+    /**
+     * Maximum number of active plan subscriptions a single user may hold at once.
+     * Counts subscriptions with status active or suspended. 0 = unlimited.
+     */
+    public static function getMaxPlansPerUser(): int
+    {
+        return max(0, (int) self::get('max_plans_per_user', '0'));
+    }
+
+    public static function setMaxPlansPerUser(int $max): void
+    {
+        self::set('max_plans_per_user', (string) max(0, $max));
+    }
+
     /** Return all settings as an array for the API. */
     public static function getAllSettings(): array
     {
@@ -148,6 +176,8 @@ class SettingsHelper
             'allow_user_cancellation' => self::getAllowUserCancellation(),
             'cancel_at_period_end' => self::getCancelAtPeriodEnd(),
             'generate_invoices' => self::getGenerateInvoices(),
+            'plans_public_enabled' => self::getPlansPublicEnabled(),
+            'max_plans_per_user' => self::getMaxPlansPerUser(),
         ];
     }
 
