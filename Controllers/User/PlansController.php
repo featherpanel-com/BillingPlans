@@ -1113,6 +1113,39 @@ class PlansController
     }
 
     /**
+     * Keep only node IDs that belong to the chosen location.
+     *
+     * @param int[] $nodeIds
+     *
+     * @return int[]
+     */
+    private function filterNodeIdsByLocation(
+        array $nodeIds,
+        int $locationId,
+    ): array {
+        if ($locationId <= 0 || empty($nodeIds)) {
+            return [];
+        }
+
+        $filtered = [];
+        foreach ($nodeIds as $nodeId) {
+            $nodeId = (int) $nodeId;
+            if ($nodeId <= 0) {
+                continue;
+            }
+            $node = Node::getNodeById($nodeId);
+            if (!$node) {
+                continue;
+            }
+            if ((int) ($node['location_id'] ?? 0) === $locationId) {
+                $filtered[] = $nodeId;
+            }
+        }
+
+        return $filtered;
+    }
+
+    /**
      * Resolve unique location IDs and labels for the plan's configured nodes.
      *
      * @param array<string,mixed> $plan
