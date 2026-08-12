@@ -709,7 +709,7 @@ class PlansController
         $plan['allowed_downgrade_plan_ids'] = Plan::decodeIds(
             $plan['allowed_downgrade_plan_ids'] ?? null,
         );
-        $locationData = $this->resolvePlanLocations($plan);
+        $locationData = $this->resolvePlanLocations($plan, $preloaded);
         $plan['location_ids'] = $locationData['ids'];
         $plan['location_names'] = $locationData['names'];
 
@@ -1149,30 +1149,66 @@ class PlansController
      * Resolve unique location IDs and labels for the plan's configured nodes.
      *
      * @param array<string,mixed> $plan
+     * @param array{
+     *   nodesById?: array<int,array<string,mixed>>,
+     *   locationsById?: array<int,array<string,mixed>>
+     * } $preloaded
      *
      * @return array{ids: int[], names: array<string,string>}
      */
-    private function resolvePlanLocations(array $plan): array
+    private function resolvePlanLocations(array $plan, array &$preloaded = []): array
     {
         $nodeIds = Plan::getNodeIds($plan);
         if (empty($nodeIds)) {
             return ['ids' => [], 'names' => []];
         }
 
+        if (!isset($preloaded['nodesById']) || !is_array($preloaded['nodesById'])) {
+            $preloaded['nodesById'] = [];
+        }
+        if (!isset($preloaded['locationsById']) || !is_array($preloaded['locationsById'])) {
+            $preloaded['locationsById'] = [];
+        }
+
+        $missingNodeIds = [];
+        foreach ($nodeIds as $nodeId) {
+            if ($nodeId > 0 && !isset($preloaded['nodesById'][$nodeId])) {
+                $missingNodeIds[] = $nodeId;
+            }
+        }
+        if ($missingNodeIds !== []) {
+            foreach (Node::getNodesByIds($missingNodeIds) as $id => $node) {
+                $preloaded['nodesById'][$id] = $node;
+            }
+        }
+
         $locationIds = [];
         $locationNames = [];
+        $missingLocationIds = [];
         foreach ($nodeIds as $nodeId) {
             if ($nodeId <= 0) {
                 continue;
             }
-            $node = Node::getNodeById($nodeId);
+            $node = $preloaded['nodesById'][$nodeId] ?? null;
             if (!$node || empty($node['location_id'])) {
                 continue;
             }
             $locationId = (int) $node['location_id'];
             $locationIds[$locationId] = true;
+            if (!isset($preloaded['locationsById'][$locationId])) {
+                $missingLocationIds[] = $locationId;
+            }
+        }
+        if ($missingLocationIds !== []) {
+            foreach (Location::getByIds($missingLocationIds) as $id => $location) {
+                $preloaded['locationsById'][$id] = $location;
+            }
+        }
+
+        foreach (array_keys($locationIds) as $locationId) {
+            $locationId = (int) $locationId;
             if (!isset($locationNames[(string) $locationId])) {
-                $location = Location::getById($locationId);
+                $location = $preloaded['locationsById'][$locationId] ?? null;
                 $name = isset($location['name'])
                     ? trim((string) $location['name'])
                     : '';
