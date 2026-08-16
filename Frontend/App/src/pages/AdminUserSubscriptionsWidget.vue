@@ -2,7 +2,7 @@
 import { ref, onMounted } from "vue";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Receipt, Server, CalendarClock, ExternalLink } from "lucide-vue-next";
+import { Loader2, Receipt, Server, CalendarClock, ExternalLink } from "@lucide/vue";
 import axios from "axios";
 
 interface Subscription {

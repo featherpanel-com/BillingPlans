@@ -6,7 +6,7 @@ import {
   ShoppingCart, AlertTriangle, CheckCircle2, Server, HardDrive,
   Cpu, Database, MemoryStick, Shield, Package, Infinity, ChevronDown,
   ChevronUp, CircleDollarSign, ArrowLeft, BarChart3, RefreshCw,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import { useUserPlansAPI, type Plan } from "@/composables/usePlansAPI";
 import { useUserSubscriptionsAPI, type Subscription } from "@/composables/useSubscriptionsAPI";
 import { useUserCategoriesAPI, type Category, colorClasses } from "@/composables/useCategoriesAPI";
@@ -682,7 +682,81 @@ watch(
 <template>
   <div class="w-full h-full overflow-auto min-h-screen">
 
-    <div v-if="shellView === 'subscribe' && planToSubscribe" class="container mx-auto max-w-4xl px-4 md:px-8 py-6">
+    <!-- Cancel subscription confirm -->
+    <div v-if="showCancelConfirm && subToCancel" class="container mx-auto max-w-3xl px-4 md:px-8 py-6">
+      <div class="flex items-center gap-3 mb-6">
+        <button type="button" @click="showCancelConfirm = false" class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft class="h-4 w-4" />Back
+        </button>
+        <span class="text-muted-foreground/40">/</span>
+        <h1 class="text-base font-semibold text-foreground">Cancel Subscription</h1>
+      </div>
+      <div class="bg-card border border-border rounded-xl shadow-sm p-6">
+        <p class="text-sm text-muted-foreground mb-5">
+          Cancel your <strong class="text-foreground">{{ subToCancel.plan_name }}</strong> subscription?
+          No refund will be issued.
+          <span v-if="subToCancel.server_uuid && cancelAtPeriodEnd" class="block mt-2 text-amber-500">
+            Your server stays available until {{ formatDate(subToCancel.next_renewal_at) }}, then enters the normal suspend/delete lifecycle.
+          </span>
+          <span v-else-if="subToCancel.server_uuid" class="block mt-2 text-amber-500">
+            Your server will be suspended immediately.
+          </span>
+        </p>
+        <div class="flex gap-3 justify-end">
+          <button @click="showCancelConfirm = false" class="rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Keep It</button>
+          <button @click="executeCancelSub" :disabled="subsLoading"
+            class="inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60 transition-colors">
+            <Loader2 v-if="subsLoading" class="h-4 w-4 animate-spin" />Yes, Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Change plan confirm -->
+    <div v-else-if="showChangePlanConfirm && subToChange" class="container mx-auto max-w-3xl px-4 md:px-8 py-6">
+      <div class="flex items-center gap-3 mb-6">
+        <button type="button" @click="showChangePlanConfirm = false" class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft class="h-4 w-4" />Back
+        </button>
+        <span class="text-muted-foreground/40">/</span>
+        <h1 class="text-base font-semibold text-foreground">Change Subscription Plan</h1>
+      </div>
+      <div class="bg-card border border-border rounded-xl shadow-sm p-6 space-y-4">
+        <p class="text-sm text-muted-foreground">
+          Current: <strong class="text-foreground">{{ subToChange.plan_name }}</strong>
+        </p>
+        <div class="billing-select-wrap">
+          <select v-model="targetPlanId" class="billing-select" :disabled="candidatePlansForSub.length === 0">
+            <option :value="null" disabled>Select new plan...</option>
+            <option v-for="plan in candidatePlansForSub" :key="plan.id" :value="plan.id">
+              {{ plan.name }} — {{ (plan.total_credits ?? plan.price_credits).toLocaleString() }} credits / {{ getPeriodLabel(plan.billing_period_days) }}
+            </option>
+          </select>
+          <ChevronDown class="billing-select-icon" />
+        </div>
+        <p v-if="candidatePlansForSub.length === 0" class="text-xs text-muted-foreground">
+          No plan changes are allowed for this subscription right now. Ask an admin.
+        </p>
+        <p v-if="selectedTargetPlan" class="text-xs text-muted-foreground">
+          <span v-if="changeDelta > 0">You will pay <strong class="text-foreground">{{ changeDelta.toLocaleString() }} credits</strong> now.</span>
+          <span v-else-if="changeDelta < 0">You will receive <strong class="text-foreground">{{ Math.abs(changeDelta).toLocaleString() }} credits</strong> now.</span>
+          <span v-else>No immediate credit change.</span>
+        </p>
+        <div class="flex gap-3 justify-end">
+          <button @click="showChangePlanConfirm = false" class="rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Cancel</button>
+          <button
+            @click="executeChangePlan"
+            :disabled="changingPlan || targetPlanId == null"
+            class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
+          >
+            <Loader2 v-if="changingPlan" class="h-4 w-4 animate-spin" />
+            Confirm Change
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-else-if="shellView === 'subscribe' && planToSubscribe" class="container mx-auto max-w-4xl px-4 md:px-8 py-6">
       <div class="flex items-center gap-3 mb-6">
         <button
           type="button"
@@ -1384,74 +1458,6 @@ watch(
 
     </div>
 
-
-    <Teleport to="body">
-      <div v-if="showCancelConfirm && subToCancel" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showCancelConfirm = false">
-        <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-sm">
-          <div class="px-6 py-4 border-b border-border"><h2 class="text-base font-semibold">Cancel Subscription?</h2></div>
-          <div class="p-6">
-            <p class="text-sm text-muted-foreground mb-5">
-              Cancel your <strong class="text-foreground">{{ subToCancel.plan_name }}</strong> subscription?
-              No refund will be issued.
-              <span v-if="subToCancel.server_uuid && cancelAtPeriodEnd" class="block mt-2 text-amber-500">
-                Your server stays available until {{ formatDate(subToCancel.next_renewal_at) }}, then enters the normal suspend/delete lifecycle.
-              </span>
-              <span v-else-if="subToCancel.server_uuid" class="block mt-2 text-amber-500">
-                Your server will be suspended immediately.
-              </span>
-            </p>
-            <div class="flex gap-3">
-              <button @click="showCancelConfirm = false" class="flex-1 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Keep It</button>
-              <button @click="executeCancelSub" :disabled="subsLoading"
-                class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60 transition-colors">
-                <Loader2 v-if="subsLoading" class="h-4 w-4 animate-spin" />Yes, Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-    <Teleport to="body">
-      <div v-if="showChangePlanConfirm && subToChange" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showChangePlanConfirm = false">
-        <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-lg">
-          <div class="px-6 py-4 border-b border-border"><h2 class="text-base font-semibold">Change Subscription Plan</h2></div>
-          <div class="p-6 space-y-4">
-            <p class="text-sm text-muted-foreground">
-              Current: <strong class="text-foreground">{{ subToChange.plan_name }}</strong>
-            </p>
-            <div class="billing-select-wrap">
-              <select v-model="targetPlanId" class="billing-select" :disabled="candidatePlansForSub.length === 0">
-                <option :value="null" disabled>Select new plan...</option>
-                <option v-for="plan in candidatePlansForSub" :key="plan.id" :value="plan.id">
-                  {{ plan.name }} — {{ (plan.total_credits ?? plan.price_credits).toLocaleString() }} credits / {{ getPeriodLabel(plan.billing_period_days) }}
-                </option>
-              </select>
-              <ChevronDown class="billing-select-icon" />
-            </div>
-            <p v-if="candidatePlansForSub.length === 0" class="text-xs text-muted-foreground">
-              No plan changes are allowed for this subscription right now. Ask an admin.
-            </p>
-            <p v-if="selectedTargetPlan" class="text-xs text-muted-foreground">
-              <span v-if="changeDelta > 0">You will pay <strong class="text-foreground">{{ changeDelta.toLocaleString() }} credits</strong> now.</span>
-              <span v-else-if="changeDelta < 0">You will receive <strong class="text-foreground">{{ Math.abs(changeDelta).toLocaleString() }} credits</strong> now.</span>
-              <span v-else>No immediate credit change.</span>
-            </p>
-            <div class="flex gap-3">
-              <button @click="showChangePlanConfirm = false" class="flex-1 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Cancel</button>
-              <button
-                @click="executeChangePlan"
-                :disabled="changingPlan || targetPlanId == null"
-                class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
-              >
-                <Loader2 v-if="changingPlan" class="h-4 w-4 animate-spin" />
-                Confirm Change
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
 
   </div>
 </template>

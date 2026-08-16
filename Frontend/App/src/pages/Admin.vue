@@ -8,7 +8,7 @@ import {
   Mail, Clock, ChevronDown, ArrowLeft,
   Package, Infinity, FolderOpen, Tag, ExternalLink, CircleDollarSign, Ticket,
   Globe, Copy, Link2,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import {
   useAdminPlansAPI, type Plan, type PlanFormData, type PlanOptions,
 } from "@/composables/usePlansAPI";
@@ -669,8 +669,201 @@ watch(
 <template>
   <div class="w-full h-full overflow-auto min-h-screen">
 
+    <!-- Delete plan confirm -->
+    <div v-if="showDeleteConfirm" class="container mx-auto max-w-3xl px-4 md:px-8 py-6">
+      <div class="flex items-center gap-3 mb-6">
+        <button type="button" @click="showDeleteConfirm = false" class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft class="h-4 w-4" />Back
+        </button>
+        <span class="text-muted-foreground/40">/</span>
+        <h1 class="text-base font-semibold text-foreground">Delete Plan</h1>
+      </div>
+      <div class="bg-card border border-border rounded-xl shadow-sm p-6">
+        <p class="text-sm text-muted-foreground mb-5">Delete <strong class="text-foreground">{{ planToDelete?.name }}</strong>? Plans with active subscriptions cannot be deleted.</p>
+        <div class="flex gap-3 justify-end">
+          <button @click="showDeleteConfirm = false" class="rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Cancel</button>
+          <button @click="executeDelete" :disabled="plansLoading" class="inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60 transition-colors">
+            <Loader2 v-if="plansLoading" class="h-4 w-4 animate-spin" /><Trash2 v-else class="h-4 w-4" />Delete
+          </button>
+        </div>
+      </div>
+    </div>
 
-    <div v-if="activeTab === 'coupons' && couponView === 'editor'" class="container mx-auto max-w-3xl px-4 md:px-8 py-6">
+    <!-- Cancel subscription confirm -->
+    <div v-else-if="showCancelSubConfirm" class="container mx-auto max-w-3xl px-4 md:px-8 py-6">
+      <div class="flex items-center gap-3 mb-6">
+        <button type="button" @click="showCancelSubConfirm = false" class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft class="h-4 w-4" />Back
+        </button>
+        <span class="text-muted-foreground/40">/</span>
+        <h1 class="text-base font-semibold text-foreground">Cancel Subscription</h1>
+      </div>
+      <div class="bg-card border border-border rounded-xl shadow-sm p-6">
+        <p class="text-sm text-muted-foreground mb-5">
+          Cancel subscription <strong class="text-foreground">#{{ subToCancel?.id }}</strong> for <strong class="text-foreground">{{ subToCancel?.username ?? "User #" + subToCancel?.user_id }}</strong>? No refund issued.
+          <span v-if="settingsForm.cancel_at_period_end && subToCancel?.next_renewal_at" class="block mt-2 text-amber-500">
+            Server stays active until {{ new Date(subToCancel.next_renewal_at).toLocaleDateString() }}, then enters suspend/delete lifecycle.
+          </span>
+          <span v-else-if="subToCancel?.server_uuid" class="block mt-2 text-amber-500">
+            Server will be suspended immediately.
+          </span>
+        </p>
+        <div class="flex gap-3 justify-end">
+          <button @click="showCancelSubConfirm = false" class="rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Go Back</button>
+          <button @click="executeCancelSub" :disabled="subsLoading" class="inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60 transition-colors">
+            <Loader2 v-if="subsLoading" class="h-4 w-4 animate-spin" />Cancel Sub
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Refund subscription confirm -->
+    <div v-else-if="showRefundSubConfirm" class="container mx-auto max-w-3xl px-4 md:px-8 py-6">
+      <div class="flex items-center gap-3 mb-6">
+        <button type="button" @click="showRefundSubConfirm = false" class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft class="h-4 w-4" />Back
+        </button>
+        <span class="text-muted-foreground/40">/</span>
+        <h1 class="text-base font-semibold text-foreground">Refund credits</h1>
+      </div>
+      <div class="bg-card border border-border rounded-xl shadow-sm p-6 space-y-4">
+        <p class="text-sm text-muted-foreground">
+          Add credits to <strong class="text-foreground">{{ subToRefund?.username ?? "User #" + subToRefund?.user_id }}</strong>
+          for subscription <strong class="text-foreground">#{{ subToRefund?.id }}</strong>.
+          Default is this plan's price ({{ subToRefund?.price_credits?.toLocaleString() ?? "—" }} cr).
+        </p>
+        <div>
+          <label class="block text-xs font-medium text-muted-foreground mb-1.5">Credits to add</label>
+          <input
+            v-model.number="refundCreditsInput"
+            type="number"
+            min="1"
+            step="1"
+            class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+        <div class="flex gap-3 justify-end">
+          <button type="button" @click="showRefundSubConfirm = false" class="rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Go back</button>
+          <button type="button" @click="executeRefundSub" :disabled="subsLoading" class="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60 transition-colors">
+            <Loader2 v-if="subsLoading" class="h-4 w-4 animate-spin" />
+            <CircleDollarSign v-else class="h-4 w-4" />
+            Refund
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Category create / edit -->
+    <div v-else-if="showCatModal" class="container mx-auto max-w-3xl px-4 md:px-8 py-6">
+      <div class="flex items-center gap-3 mb-6">
+        <button type="button" @click="showCatModal = false" class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft class="h-4 w-4" />Back to Categories
+        </button>
+        <span class="text-muted-foreground/40">/</span>
+        <h1 class="text-base font-semibold text-foreground">{{ editingCategory ? 'Edit Category' : 'New Category' }}</h1>
+      </div>
+      <div class="bg-card border border-border rounded-xl shadow-sm p-6 space-y-4">
+        <div class="flex gap-3">
+          <div class="w-20 flex-shrink-0">
+            <label class="block text-xs font-medium text-muted-foreground mb-1.5">Icon (emoji or image URL)</label>
+            <input v-model="catForm.icon" placeholder="🎮 or /attachments/banner.png"
+              class="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-center text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+          </div>
+          <div class="flex-1">
+            <label class="block text-xs font-medium text-muted-foreground mb-1.5">Name <span class="text-red-400">*</span></label>
+            <input v-model="catForm.name" placeholder="e.g. Minecraft, Game Servers..."
+              class="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-muted-foreground mb-1.5">Description</label>
+          <input v-model="catForm.description" placeholder="Short description shown to users..."
+            class="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-muted-foreground mb-2">Color</label>
+          <div class="flex flex-wrap gap-2">
+            <button v-for="c in CATEGORY_COLORS" :key="c.value" type="button"
+              @click="catForm.color = c.value"
+              :class="['px-3 py-1 rounded-full text-xs font-medium border transition-all', colorClasses(c.value, catForm.color === c.value)]">
+              {{ c.label }}
+            </button>
+          </div>
+        </div>
+
+        <div class="flex gap-3 items-end">
+          <div class="w-28">
+            <label class="block text-xs font-medium text-muted-foreground mb-1.5">Sort Order</label>
+            <input v-model.number="catForm.sort_order" type="number" min="0"
+              class="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+          </div>
+          <div class="flex items-center justify-between flex-1 p-3 rounded-lg border border-border bg-muted/20">
+            <p class="text-sm font-medium">Active</p>
+            <button type="button" @click="catForm.is_active = !catForm.is_active" class="shrink-0">
+              <ToggleRight v-if="catForm.is_active" class="h-7 w-7 text-primary" />
+              <ToggleLeft v-else class="h-7 w-7 text-muted-foreground" />
+            </button>
+          </div>
+        </div>
+
+        <div class="flex gap-3 justify-end pt-1">
+          <button @click="showCatModal = false" class="rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Cancel</button>
+          <button @click="saveCat" :disabled="catsLoading || !catForm.name.trim()"
+            class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors">
+            <Loader2 v-if="catsLoading" class="h-4 w-4 animate-spin" />
+            <Save v-else class="h-4 w-4" />
+            {{ editingCategory ? 'Save Changes' : 'Create Category' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete category confirm -->
+    <div v-else-if="showDeleteCatConfirm" class="container mx-auto max-w-3xl px-4 md:px-8 py-6">
+      <div class="flex items-center gap-3 mb-6">
+        <button type="button" @click="showDeleteCatConfirm = false" class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft class="h-4 w-4" />Back
+        </button>
+        <span class="text-muted-foreground/40">/</span>
+        <h1 class="text-base font-semibold text-foreground">Delete Category</h1>
+      </div>
+      <div class="bg-card border border-border rounded-xl shadow-sm p-6">
+        <p class="text-sm text-muted-foreground mb-5">
+          Delete <strong class="text-foreground">{{ catToDelete?.name }}</strong>?
+          Plans in this category will become uncategorised — they won't be deleted.
+        </p>
+        <div class="flex gap-3 justify-end">
+          <button @click="showDeleteCatConfirm = false" class="rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Cancel</button>
+          <button @click="executeDeleteCat" :disabled="catsLoading" class="inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60 transition-colors">
+            <Loader2 v-if="catsLoading" class="h-4 w-4 animate-spin" /><Trash2 v-else class="h-4 w-4" />Delete
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete coupon confirm -->
+    <div v-else-if="showDeleteCouponConfirm && couponToDelete" class="container mx-auto max-w-3xl px-4 md:px-8 py-6">
+      <div class="flex items-center gap-3 mb-6">
+        <button type="button" @click="showDeleteCouponConfirm = false" class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft class="h-4 w-4" />Back
+        </button>
+        <span class="text-muted-foreground/40">/</span>
+        <h1 class="text-base font-semibold text-foreground">Delete Coupon</h1>
+      </div>
+      <div class="bg-card border border-border rounded-xl shadow-sm p-6">
+        <p class="text-sm text-muted-foreground mb-5">Delete coupon <strong class="text-foreground font-mono">{{ couponToDelete.code }}</strong>? Users will no longer be able to redeem it.</p>
+        <div class="flex gap-3 justify-end">
+          <button @click="showDeleteCouponConfirm = false" class="rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Cancel</button>
+          <button @click="executeDeleteCoupon" :disabled="couponsLoading" class="inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60 transition-colors">
+            <Loader2 v-if="couponsLoading" class="h-4 w-4 animate-spin" /><Trash2 v-else class="h-4 w-4" />Delete
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-else-if="activeTab === 'coupons' && couponView === 'editor'" class="container mx-auto max-w-3xl px-4 md:px-8 py-6">
       <div class="flex items-center gap-3 mb-6">
         <button type="button" @click="cancelCouponEditor" class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft class="h-4 w-4" />Back to Coupons
@@ -2224,192 +2417,5 @@ watch(
     </div>
 
 
-    <Teleport to="body">
-      <div v-if="showDeleteConfirm" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showDeleteConfirm = false">
-        <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-sm">
-          <div class="px-6 py-4 border-b border-border"><h2 class="text-base font-semibold">Delete Plan</h2></div>
-          <div class="p-6">
-            <p class="text-sm text-muted-foreground mb-5">Delete <strong class="text-foreground">{{ planToDelete?.name }}</strong>? Plans with active subscriptions cannot be deleted.</p>
-            <div class="flex gap-3">
-              <button @click="showDeleteConfirm = false" class="flex-1 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Cancel</button>
-              <button @click="executeDelete" :disabled="plansLoading" class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60 transition-colors">
-                <Loader2 v-if="plansLoading" class="h-4 w-4 animate-spin" /><Trash2 v-else class="h-4 w-4" />Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-
-    <Teleport to="body">
-      <div v-if="showCancelSubConfirm" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showCancelSubConfirm = false">
-        <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-sm">
-          <div class="px-6 py-4 border-b border-border"><h2 class="text-base font-semibold">Cancel Subscription</h2></div>
-          <div class="p-6">
-            <p class="text-sm text-muted-foreground mb-5">
-              Cancel subscription <strong class="text-foreground">#{{ subToCancel?.id }}</strong> for <strong class="text-foreground">{{ subToCancel?.username ?? "User #" + subToCancel?.user_id }}</strong>? No refund issued.
-              <span v-if="settingsForm.cancel_at_period_end && subToCancel?.next_renewal_at" class="block mt-2 text-amber-500">
-                Server stays active until {{ new Date(subToCancel.next_renewal_at).toLocaleDateString() }}, then enters suspend/delete lifecycle.
-              </span>
-              <span v-else-if="subToCancel?.server_uuid" class="block mt-2 text-amber-500">
-                Server will be suspended immediately.
-              </span>
-            </p>
-            <div class="flex gap-3">
-              <button @click="showCancelSubConfirm = false" class="flex-1 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Go Back</button>
-              <button @click="executeCancelSub" :disabled="subsLoading" class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60 transition-colors">
-                <Loader2 v-if="subsLoading" class="h-4 w-4 animate-spin" />Cancel Sub
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-
-    <Teleport to="body">
-      <div v-if="showRefundSubConfirm" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showRefundSubConfirm = false">
-        <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-sm">
-          <div class="px-6 py-4 border-b border-border"><h2 class="text-base font-semibold">Refund credits</h2></div>
-          <div class="p-6 space-y-4">
-            <p class="text-sm text-muted-foreground">
-              Add credits to <strong class="text-foreground">{{ subToRefund?.username ?? "User #" + subToRefund?.user_id }}</strong>
-              for subscription <strong class="text-foreground">#{{ subToRefund?.id }}</strong>.
-              Default is this plan's price ({{ subToRefund?.price_credits?.toLocaleString() ?? "—" }} cr).
-            </p>
-            <div>
-              <label class="block text-xs font-medium text-muted-foreground mb-1.5">Credits to add</label>
-              <input
-                v-model.number="refundCreditsInput"
-                type="number"
-                min="1"
-                step="1"
-                class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
-            <div class="flex gap-3">
-              <button type="button" @click="showRefundSubConfirm = false" class="flex-1 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Go back</button>
-              <button type="button" @click="executeRefundSub" :disabled="subsLoading" class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60 transition-colors">
-                <Loader2 v-if="subsLoading" class="h-4 w-4 animate-spin" />
-                <CircleDollarSign v-else class="h-4 w-4" />
-                Refund
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-
-    <Teleport to="body">
-      <div v-if="showCatModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showCatModal = false">
-        <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-md">
-          <div class="flex items-center justify-between px-6 py-4 border-b border-border">
-            <h2 class="text-base font-semibold">{{ editingCategory ? 'Edit Category' : 'New Category' }}</h2>
-            <button @click="showCatModal = false" class="text-muted-foreground hover:text-foreground transition-colors"><XCircle class="h-5 w-5" /></button>
-          </div>
-          <div class="p-6 space-y-4">
-
-
-            <div class="flex gap-3">
-              <div class="w-20 flex-shrink-0">
-                <label class="block text-xs font-medium text-muted-foreground mb-1.5">Icon (emoji or image URL)</label>
-                <input v-model="catForm.icon" placeholder="🎮 or /attachments/banner.png"
-                  class="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-center text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-              </div>
-              <div class="flex-1">
-                <label class="block text-xs font-medium text-muted-foreground mb-1.5">Name <span class="text-red-400">*</span></label>
-                <input v-model="catForm.name" placeholder="e.g. Minecraft, Game Servers..."
-                  class="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-              </div>
-            </div>
-
-
-            <div>
-              <label class="block text-xs font-medium text-muted-foreground mb-1.5">Description</label>
-              <input v-model="catForm.description" placeholder="Short description shown to users..."
-                class="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-            </div>
-
-
-            <div>
-              <label class="block text-xs font-medium text-muted-foreground mb-2">Color</label>
-              <div class="flex flex-wrap gap-2">
-                <button v-for="c in CATEGORY_COLORS" :key="c.value" type="button"
-                  @click="catForm.color = c.value"
-                  :class="['px-3 py-1 rounded-full text-xs font-medium border transition-all', colorClasses(c.value, catForm.color === c.value)]">
-                  {{ c.label }}
-                </button>
-              </div>
-            </div>
-
-
-            <div class="flex gap-3 items-end">
-              <div class="w-28">
-                <label class="block text-xs font-medium text-muted-foreground mb-1.5">Sort Order</label>
-                <input v-model.number="catForm.sort_order" type="number" min="0"
-                  class="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-              </div>
-              <div class="flex items-center justify-between flex-1 p-3 rounded-lg border border-border bg-muted/20">
-                <p class="text-sm font-medium">Active</p>
-                <button type="button" @click="catForm.is_active = !catForm.is_active" class="shrink-0">
-                  <ToggleRight v-if="catForm.is_active" class="h-7 w-7 text-primary" />
-                  <ToggleLeft v-else class="h-7 w-7 text-muted-foreground" />
-                </button>
-              </div>
-            </div>
-
-            <div class="flex gap-3 pt-1">
-              <button @click="showCatModal = false" class="flex-1 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Cancel</button>
-              <button @click="saveCat" :disabled="catsLoading || !catForm.name.trim()"
-                class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors">
-                <Loader2 v-if="catsLoading" class="h-4 w-4 animate-spin" />
-                <Save v-else class="h-4 w-4" />
-                {{ editingCategory ? 'Save Changes' : 'Create Category' }}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-
-    <Teleport to="body">
-      <div v-if="showDeleteCatConfirm" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showDeleteCatConfirm = false">
-        <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-sm">
-          <div class="px-6 py-4 border-b border-border"><h2 class="text-base font-semibold">Delete Category</h2></div>
-          <div class="p-6">
-            <p class="text-sm text-muted-foreground mb-5">
-              Delete <strong class="text-foreground">{{ catToDelete?.name }}</strong>?
-              Plans in this category will become uncategorised — they won't be deleted.
-            </p>
-            <div class="flex gap-3">
-              <button @click="showDeleteCatConfirm = false" class="flex-1 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Cancel</button>
-              <button @click="executeDeleteCat" :disabled="catsLoading" class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60 transition-colors">
-                <Loader2 v-if="catsLoading" class="h-4 w-4 animate-spin" /><Trash2 v-else class="h-4 w-4" />Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-    <Teleport to="body">
-      <div v-if="showDeleteCouponConfirm && couponToDelete" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showDeleteCouponConfirm = false">
-        <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-sm">
-          <div class="px-6 py-4 border-b border-border"><h2 class="text-base font-semibold">Delete Coupon</h2></div>
-          <div class="p-6">
-            <p class="text-sm text-muted-foreground mb-5">Delete coupon <strong class="text-foreground font-mono">{{ couponToDelete.code }}</strong>? Users will no longer be able to redeem it.</p>
-            <div class="flex gap-3">
-              <button @click="showDeleteCouponConfirm = false" class="flex-1 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-accent transition-colors">Cancel</button>
-              <button @click="executeDeleteCoupon" :disabled="couponsLoading" class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60 transition-colors">
-                <Loader2 v-if="couponsLoading" class="h-4 w-4 animate-spin" /><Trash2 v-else class="h-4 w-4" />Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>
