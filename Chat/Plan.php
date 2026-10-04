@@ -105,7 +105,7 @@ class Plan
             'INSERT INTO ' .
                 self::$table .
                 '
-             (category_id, name, description, long_description, price_credits, billing_period_days, is_active, max_subscriptions, server_config,
+             (category_id, name, product_type, description, long_description, price_credits, billing_period_days, is_active, max_subscriptions, server_config, vds_config,
               tax_rate_percent, extra_charge_percent, extra_charge_name,
               node_ids, node_id, realms_id, user_can_choose_realm, allowed_realms,
               spell_id, user_can_choose_spell, allowed_spells,
@@ -113,7 +113,7 @@ class Plan
               backup_limit, database_limit, allocation_limit, startup_override, image_override, card_background_image,
               allowed_upgrade_plan_ids, allowed_downgrade_plan_ids, slider_config)
              VALUES
-             (:category_id, :name, :description, :long_description, :price_credits, :billing_period_days, :is_active, :max_subscriptions, :server_config,
+             (:category_id, :name, :product_type, :description, :long_description, :price_credits, :billing_period_days, :is_active, :max_subscriptions, :server_config, :vds_config,
               :tax_rate_percent, :extra_charge_percent, :extra_charge_name,
               :node_ids, :node_id, :realms_id, :user_can_choose_realm, :allowed_realms,
               :spell_id, :user_can_choose_spell, :allowed_spells,
@@ -126,6 +126,9 @@ class Plan
                     ? (int) $data['category_id']
                     : null,
             'name' => $data['name'],
+            'product_type' => in_array(($data['product_type'] ?? 'server'), ['server', 'vds'], true)
+                ? $data['product_type']
+                : 'server',
             'description' => $data['description'] ?? null,
             'long_description' => $data['long_description'] ?? null,
             'price_credits' => (int) ($data['price_credits'] ?? 0),
@@ -137,6 +140,11 @@ class Plan
                 ? (is_array($data['server_config'])
                     ? json_encode($data['server_config'])
                     : $data['server_config'])
+                : null,
+            'vds_config' => isset($data['vds_config'])
+                ? (is_array($data['vds_config'])
+                    ? json_encode($data['vds_config'])
+                    : $data['vds_config'])
                 : null,
             'tax_rate_percent' => self::normalizePercentage(
                 $data['tax_rate_percent'] ?? 0,
@@ -219,6 +227,7 @@ class Plan
         $allowed = [
             'category_id',
             'name',
+            'product_type',
             'description',
             'long_description',
             'price_credits',
@@ -226,6 +235,7 @@ class Plan
             'is_active',
             'max_subscriptions',
             'server_config',
+            'vds_config',
             'tax_rate_percent',
             'extra_charge_percent',
             'extra_charge_name',
@@ -257,7 +267,7 @@ class Plan
         foreach ($allowed as $field) {
             if (array_key_exists($field, $data)) {
                 $sets[] = "`{$field}` = :{$field}";
-                if ($field === 'server_config' && is_array($data[$field])) {
+                if (in_array($field, ['server_config', 'vds_config'], true) && is_array($data[$field])) {
                     $params[$field] = json_encode($data[$field]);
                 } elseif (
                     in_array(

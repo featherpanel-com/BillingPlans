@@ -5,7 +5,7 @@ import {
   Loader2, Plus, Pencil, Trash2, CreditCard, Users,
   CheckCircle2, PauseCircle, XCircle, RefreshCw, Save, Settings,
   ShieldAlert, BarChart3, ToggleLeft, ToggleRight, ServerOff, Server, FileText,
-  Mail, Clock, ChevronDown, ArrowLeft,
+  Mail, Clock, ChevronDown, ArrowLeft, HardDrive,
   Package, Infinity, FolderOpen, Tag, ExternalLink, CircleDollarSign, Ticket,
   Globe, Copy, Link2,
 } from "@lucide/vue";
@@ -89,7 +89,7 @@ const settingsForm = ref<BillingPlanSettings>({
   allow_user_cancellation: true, cancel_at_period_end: true, generate_invoices: true,
   plans_public_enabled: false, max_plans_per_user: 0,
 });
-const planOptions = ref<PlanOptions>({ plans: [], nodes: [], realms: [], spells: [], categories: [] });
+const planOptions = ref<PlanOptions>({ plans: [], nodes: [], vm_nodes: [], vm_templates: [], realms: [], spells: [], categories: [] });
 
 
 const plansPage = ref(1);
@@ -140,6 +140,8 @@ const PRESET_PERIODS = [
 
 const emptyForm = (): PlanEditorForm => ({
   category_id: null,
+  product_type: "server",
+  vds_config: {},
   name: "", description: null, long_description: null,
   price_credits: 0, tax_rate_percent: 0, extra_charge_percent: 0, extra_charge_name: null,
   billing_period_days: 30, is_active: true, max_subscriptions: null,
@@ -155,6 +157,10 @@ const emptyForm = (): PlanEditorForm => ({
   user_can_choose_spell: false, allowed_spells: [],
 });
 const planForm = ref<PlanEditorForm>(emptyForm());
+const vdsConfig = () => {
+  if (!planForm.value.vds_config) planForm.value.vds_config = {};
+  return planForm.value.vds_config;
+};
 
 const ensureSliderConfig = (key: string) => {
   if (!planForm.value.slider_config) {
@@ -496,6 +502,8 @@ const openEdit = (plan: Plan) => {
   editingPlan.value = plan;
   planForm.value = {
     category_id: plan.category_id ?? null,
+    product_type: plan.product_type ?? "server",
+    vds_config: plan.vds_config ? (typeof plan.vds_config === "string" ? JSON.parse(plan.vds_config) : { ...plan.vds_config }) : {},
     name: plan.name, description: plan.description, long_description: plan.long_description,
     price_credits: plan.price_credits, billing_period_days: plan.billing_period_days,
     tax_rate_percent: Number(plan.tax_rate_percent ?? 0),
@@ -953,6 +961,17 @@ watch(
                 class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
             </div>
 
+            <div>
+              <label class="block text-sm font-medium mb-1.5">Product Type</label>
+              <div class="billing-select-wrap">
+                <select v-model="planForm.product_type" class="billing-select">
+                  <option value="server">Game Server</option>
+                  <option value="vds">VDS / Virtual Machine</option>
+                </select>
+                <ChevronDown class="billing-select-icon" />
+              </div>
+            </div>
+
 
             <div class="md:col-span-2">
               <label class="block text-sm font-medium mb-1.5 flex items-center gap-1.5"><Tag class="h-3.5 w-3.5 text-muted-foreground" />Category</label>
@@ -1163,7 +1182,52 @@ watch(
         </div>
 
 
-        <div class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+        <div v-if="planForm.product_type === 'vds'" class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+          <div class="px-5 py-3 border-b border-border bg-muted/30">
+            <h3 class="text-sm font-semibold text-foreground flex items-center gap-2"><HardDrive class="h-4 w-4 text-primary" />VDS Template</h3>
+            <p class="text-xs text-muted-foreground mt-0.5">Create a virtual machine automatically when a user subscribes.</p>
+          </div>
+          <div class="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">VM Node</label>
+              <select v-model.number="vdsConfig().vm_node_id" class="billing-select">
+                <option :value="undefined">— Select VM node —</option>
+                <option v-for="n in planOptions.vm_nodes" :key="n.id" :value="n.id">{{ n.name }}</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">VM Template</label>
+              <select v-model.number="vdsConfig().template_id" class="billing-select">
+                <option :value="undefined">— Select template —</option>
+                <option v-for="t in planOptions.vm_templates" :key="t.id" :value="t.id">{{ t.name }} ({{ t.guest_type }})</option>
+              </select>
+            </div>
+            <div v-for="field in [
+              ['memory', 'Memory (MB)', 512], ['cpus', 'CPU sockets', 1], ['cores', 'CPU cores', 1], ['disk', 'Disk (GB)', 10]
+            ]" :key="field[0]">
+              <label class="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">{{ field[1] }}</label>
+              <input v-model.number="vdsConfig()[field[0]]" type="number" :min="field[2]" class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Storage</label>
+              <input v-model="vdsConfig().storage" placeholder="local" class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Network bridge</label>
+              <input v-model="vdsConfig().bridge" placeholder="vmbr0" class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Cloud-init user</label>
+              <input v-model="vdsConfig().ci_user" placeholder="root" class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Cloud-init password</label>
+              <input v-model="vdsConfig().ci_password" type="password" class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" />
+            </div>
+          </div>
+        </div>
+
+        <div v-else class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
           <div class="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
             <div>
               <h3 class="text-sm font-semibold text-foreground flex items-center gap-2"><Server class="h-4 w-4 text-primary" />Server Template</h3>

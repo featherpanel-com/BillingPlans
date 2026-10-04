@@ -29,6 +29,7 @@ use App\Addons\billingplans\Chat\Subscription;
 use Symfony\Component\HttpFoundation\Response;
 use App\Addons\billingcore\Helpers\CreditsHelper;
 use App\Addons\billingplans\Helpers\SettingsHelper;
+use App\Addons\billingplans\Services\VdsProvisioningService;
 
 #[OA\Tag(
     name: 'User - Billing Plans Subscriptions',
@@ -266,6 +267,7 @@ class SubscriptionsController
         }
 
         $serverUuid = $subscription['server_uuid'] ?? null;
+        $isVds = ($subscription['product_type'] ?? 'server') === 'vds';
         if (
             !$atPeriodEnd
             && $serverUuid
@@ -285,6 +287,9 @@ class SubscriptionsController
                         $e->getMessage(),
                 );
             }
+        }
+        if (!$atPeriodEnd && $isVds && SettingsHelper::getSuspendServers()) {
+            VdsProvisioningService::queuePowerAction($subscription, 'stop');
         }
 
         Activity::createActivity([

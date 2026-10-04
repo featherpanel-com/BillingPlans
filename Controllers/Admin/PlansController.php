@@ -21,6 +21,8 @@ use App\Chat\Node;
 use App\Chat\Image;
 use App\Chat\Realm;
 use App\Chat\Spell;
+use App\Chat\VmNode;
+use App\Chat\VmTemplate;
 use App\Chat\Activity;
 use App\Helpers\ApiResponse;
 use OpenApi\Attributes as OA;
@@ -68,6 +70,10 @@ class PlansController
                     $plan['server_config'],
                     true,
                 );
+            }
+            $plan['product_type'] = ($plan['product_type'] ?? 'server') === 'vds' ? 'vds' : 'server';
+            if (is_string($plan['vds_config'] ?? null)) {
+                $plan['vds_config'] = json_decode($plan['vds_config'], true);
             }
             $plan['allowed_realms'] = Plan::decodeIds(
                 $plan['allowed_realms'] ?? null,
@@ -162,6 +168,10 @@ class PlansController
             && is_string($plan['server_config'])
         ) {
             $plan['server_config'] = json_decode($plan['server_config'], true);
+        }
+        $plan['product_type'] = ($plan['product_type'] ?? 'server') === 'vds' ? 'vds' : 'server';
+        if (is_string($plan['vds_config'] ?? null)) {
+            $plan['vds_config'] = json_decode($plan['vds_config'], true);
         }
         $plan['allowed_realms'] = Plan::decodeIds(
             $plan['allowed_realms'] ?? null,
@@ -288,6 +298,7 @@ class PlansController
                     ? (int) $data['category_id']
                     : null,
             'name' => trim($data['name']),
+            'product_type' => ($data['product_type'] ?? 'server') === 'vds' ? 'vds' : 'server',
             'description' => isset($data['description'])
                 ? trim($data['description'])
                 : null,
@@ -314,6 +325,7 @@ class PlansController
                     ? max(1, (int) $data['max_subscriptions'])
                     : null,
             'server_config' => $data['server_config'] ?? null,
+            'vds_config' => $data['vds_config'] ?? null,
             'node_ids' => $selectedNodeIds,
             'node_id' => isset($data['node_id']) && $data['node_id']
                     ? (int) $data['node_id']
@@ -466,6 +478,12 @@ class PlansController
         if (array_key_exists('server_config', $data)) {
             $updateData['server_config'] = $data['server_config'];
         }
+        if (array_key_exists('product_type', $data)) {
+            $updateData['product_type'] = $data['product_type'] === 'vds' ? 'vds' : 'server';
+        }
+        if (array_key_exists('vds_config', $data)) {
+            $updateData['vds_config'] = $data['vds_config'];
+        }
         if (array_key_exists('slider_config', $data)) {
             $updateData['slider_config'] = $data['slider_config'];
         }
@@ -589,6 +607,10 @@ class PlansController
                 true,
             );
         }
+        $updated['product_type'] = ($updated['product_type'] ?? 'server') === 'vds' ? 'vds' : 'server';
+        if (is_string($updated['vds_config'] ?? null)) {
+            $updated['vds_config'] = json_decode($updated['vds_config'], true);
+        }
         if (
             isset($updated['slider_config'])
             && is_string($updated['slider_config'])
@@ -698,6 +720,23 @@ class PlansController
         return ApiResponse::success(
             [
                 'nodes' => array_values($nodes),
+                'vm_nodes' => array_map(
+                    static fn (array $node): array => [
+                        'id' => (int) $node['id'],
+                        'name' => (string) $node['name'],
+                    ],
+                    VmNode::getAllVmNodes(),
+                ),
+                'vm_templates' => array_map(
+                    static fn (array $template): array => [
+                        'id' => (int) $template['id'],
+                        'name' => (string) $template['name'],
+                        'guest_type' => $template['guest_type'] ?? 'qemu',
+                        'vm_node_id' => isset($template['vm_node_id']) ? (int) $template['vm_node_id'] : null,
+                        'storage' => $template['storage'] ?? 'local',
+                    ],
+                    VmTemplate::getAll(true),
+                ),
                 'plans' => array_values($plans),
                 'realms' => array_values($realms),
                 'spells' => array_values($spells),

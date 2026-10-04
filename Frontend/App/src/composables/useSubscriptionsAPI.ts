@@ -7,6 +7,9 @@ export interface Subscription {
   user_id: number;
   plan_id: number;
   server_uuid: string | null;
+  product_type?: "server" | "vds";
+  vm_instance_id?: number | null;
+  vm_creation_task_id?: string | null;
   status: "pending" | "active" | "suspended" | "cancelled" | "expired";
   next_renewal_at: string | null;
   suspended_at: string | null;

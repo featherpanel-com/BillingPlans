@@ -1,6 +1,6 @@
 # BillingPlans
 
-Sell servers as renewable billing plans with credit-based billing — a full WHMCS-style subscription engine for FeatherPanel. Integrates with **Billing Core** for credit payments and optional invoice generation.
+Sell game servers and VDS machines as renewable billing plans with credit-based billing — a full WHMCS-style subscription engine for FeatherPanel. Integrates with **Billing Core** for credit payments and optional invoice generation.
 
 
 ## Features
@@ -10,12 +10,12 @@ Sell servers as renewable billing plans with credit-based billing — a full WHM
   - Browse plans by category; view plan details
   - Subscribe with credits; apply coupon codes at checkout
   - Manage subscriptions: view, cancel, change plan
-  - Server provisioned automatically on subscribe (plan defines server config)
+  - Server or VDS provisioned automatically on subscribe (plan defines the resource config)
 
 - **Admin**
   - **Billing → Billing Plans**
   - Plan categories (CRUD)
-  - Plans CRUD — price in credits, billing period, server limits, spell/realm/node placement, tax/extra charges, upgrade/downgrade paths, slider pricing
+  - Plans CRUD — price in credits, billing period, server/VDS resources, spell/realm/node placement, tax/extra charges, upgrade/downgrade paths, slider pricing
   - Plan images upload
   - Subscriptions management — list, edit, cancel, refund credits
   - Plan coupons (separate from redeem codes)

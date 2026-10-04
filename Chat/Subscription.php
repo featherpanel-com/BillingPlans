@@ -27,7 +27,7 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name,
+            'SELECT s.*, p.name as plan_name, p.product_type, p.vds_config, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name,
                     p.allowed_upgrade_plan_ids, p.allowed_downgrade_plan_ids, p.slider_config
              FROM ' .
                 self::$table .
@@ -109,7 +109,7 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.description as plan_description,
+            'SELECT s.*, p.name as plan_name, p.product_type, p.vds_config, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.description as plan_description,
                     p.allowed_upgrade_plan_ids, p.allowed_downgrade_plan_ids, p.slider_config
              FROM ' .
                 self::$table .
@@ -127,7 +127,7 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.description as plan_description,
+            'SELECT s.*, p.name as plan_name, p.product_type, p.vds_config, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.description as plan_description,
                     p.allowed_upgrade_plan_ids, p.allowed_downgrade_plan_ids, p.slider_config
              FROM ' .
                 self::$table .
@@ -148,7 +148,7 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.slider_config
+            'SELECT s.*, p.name as plan_name, p.product_type, p.vds_config, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.slider_config
              FROM ' .
                 self::$table .
                 ' s
@@ -204,7 +204,7 @@ class Subscription
         $total = (int) $countStmt->fetch(\PDO::FETCH_ASSOC)['count'];
 
         $sql =
-            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name,
+            'SELECT s.*, p.name as plan_name, p.product_type, p.vds_config, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name,
                        u.username, u.email, u.uuid as user_uuid
                 FROM ' .
             self::$table .
@@ -235,8 +235,8 @@ class Subscription
         $stmt = $pdo->prepare(
             'INSERT INTO ' .
                 self::$table .
-                ' (user_id, plan_id, coupon_code_id, coupon_code, coupon_scope, renewal_discount_percent, renewal_discount_credits, server_uuid, status, next_renewal_at, custom_resources)
-             VALUES (:user_id, :plan_id, :coupon_code_id, :coupon_code, :coupon_scope, :renewal_discount_percent, :renewal_discount_credits, :server_uuid, :status, :next_renewal_at, :custom_resources)',
+             ' (user_id, plan_id, coupon_code_id, coupon_code, coupon_scope, renewal_discount_percent, renewal_discount_credits, server_uuid, vm_instance_id, vm_creation_task_id, status, next_renewal_at, custom_resources)
+             VALUES (:user_id, :plan_id, :coupon_code_id, :coupon_code, :coupon_scope, :renewal_discount_percent, :renewal_discount_credits, :server_uuid, :vm_instance_id, :vm_creation_task_id, :status, :next_renewal_at, :custom_resources)',
         );
         $stmt->execute([
             'user_id' => (int) $data['user_id'],
@@ -257,6 +257,8 @@ class Subscription
                 ? (int) $data['renewal_discount_credits']
                 : null,
             'server_uuid' => $data['server_uuid'] ?? null,
+            'vm_instance_id' => isset($data['vm_instance_id']) ? (int) $data['vm_instance_id'] : null,
+            'vm_creation_task_id' => $data['vm_creation_task_id'] ?? null,
             'status' => $data['status'] ?? 'active',
             'next_renewal_at' => $data['next_renewal_at'] ?? null,
             'custom_resources' => $data['custom_resources'] ?? null,
@@ -292,14 +294,13 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.billing_period_days, p.price_credits, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.slider_config
+            'SELECT s.*, p.name as plan_name, p.product_type, p.vds_config, p.billing_period_days, p.price_credits, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.slider_config
              FROM ' .
                 self::$table .
                 ' s
              LEFT JOIN featherpanel_billingplans_plans p ON s.plan_id = p.id
              WHERE s.status = \'cancelled\'
-               AND s.server_uuid IS NOT NULL
-               AND s.server_uuid != \'\'
+               AND ((s.server_uuid IS NOT NULL AND s.server_uuid != \'\') OR s.vm_instance_id IS NOT NULL)
                AND s.suspended_at IS NULL
                AND (s.next_renewal_at IS NULL OR s.next_renewal_at <= NOW())
              ORDER BY s.next_renewal_at ASC',
@@ -316,7 +317,7 @@ class Subscription
     {
         $pdo = Database::getPdoConnection();
         $stmt = $pdo->prepare(
-            'SELECT s.*, p.name as plan_name, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.slider_config
+            'SELECT s.*, p.name as plan_name, p.product_type, p.vds_config, p.price_credits, p.billing_period_days, p.tax_rate_percent, p.extra_charge_percent, p.extra_charge_name, p.slider_config
              FROM ' .
                 self::$table .
                 ' s
@@ -325,6 +326,22 @@ class Subscription
              ORDER BY s.suspended_at ASC',
         );
         $stmt->execute(['status' => $status]);
+
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+    }
+
+    /** @return list<array<string, mixed>> */
+    public static function getPendingVdsProvisioning(): array
+    {
+        $pdo = Database::getPdoConnection();
+        $stmt = $pdo->query(
+            'SELECT s.*, p.name as plan_name, p.product_type, p.vds_config
+             FROM ' . self::$table . ' s
+             LEFT JOIN featherpanel_billingplans_plans p ON s.plan_id = p.id
+             WHERE p.product_type = \'vds\' AND s.vm_instance_id IS NULL
+               AND s.vm_creation_task_id IS NOT NULL AND s.status IN (\'active\', \'suspended\')
+             ORDER BY s.id ASC',
+        );
 
         return $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
     }
@@ -341,6 +358,8 @@ class Subscription
             'renewal_discount_percent',
             'renewal_discount_credits',
             'server_uuid',
+            'vm_instance_id',
+            'vm_creation_task_id',
             'next_renewal_at',
             'suspended_at',
             'grace_started_at',

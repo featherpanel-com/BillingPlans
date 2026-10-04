@@ -29,6 +29,7 @@ use App\Addons\billingplans\Chat\Subscription;
 use Symfony\Component\HttpFoundation\Response;
 use App\Addons\billingcore\Helpers\CreditsHelper;
 use App\Addons\billingplans\Helpers\SettingsHelper;
+use App\Addons\billingplans\Services\VdsProvisioningService;
 
 #[OA\Tag(name: 'Admin - Billing Plans Subscriptions', description: 'Manage user subscriptions')]
 class SubscriptionsController
@@ -234,6 +235,7 @@ class SubscriptionsController
 
         // Mirror server state when admin changes status
         $serverUuid = $subscription['server_uuid'] ?? null;
+        $isVds = ($subscription['product_type'] ?? 'server') === 'vds';
         if ($serverUuid && SettingsHelper::getSuspendServers() && isset($data['status'])) {
             try {
                 $server = Server::getServerByUuid($serverUuid);
@@ -247,6 +249,13 @@ class SubscriptionsController
             } catch (\Exception $e) {
                 $app = App::getInstance(false, true);
                 $app->getLogger()->error("BillingPlans: Failed to update server state for $serverUuid on admin update of subscription #$subscriptionId: " . $e->getMessage());
+            }
+        }
+        if ($isVds && SettingsHelper::getSuspendServers() && isset($data['status'])) {
+            if (in_array($data['status'], ['suspended', 'cancelled'], true)) {
+                VdsProvisioningService::queuePowerAction($subscription, 'stop');
+            } elseif ($data['status'] === 'active') {
+                VdsProvisioningService::queuePowerAction($subscription, 'start');
             }
         }
 
@@ -295,6 +304,7 @@ class SubscriptionsController
         }
 
         $serverUuid = $subscription['server_uuid'] ?? null;
+        $isVds = ($subscription['product_type'] ?? 'server') === 'vds';
         if (!$atPeriodEnd && $serverUuid && SettingsHelper::getSuspendServers()) {
             try {
                 $server = Server::getServerByUuid($serverUuid);
@@ -305,6 +315,9 @@ class SubscriptionsController
                 $app = App::getInstance(false, true);
                 $app->getLogger()->error("BillingPlans: Failed to suspend server $serverUuid on admin cancel of subscription #$subscriptionId: " . $e->getMessage());
             }
+        }
+        if (!$atPeriodEnd && $isVds && SettingsHelper::getSuspendServers()) {
+            VdsProvisioningService::queuePowerAction($subscription, 'stop');
         }
 
         Activity::createActivity([

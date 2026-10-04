@@ -41,6 +41,7 @@ use Symfony\Component\HttpFoundation\Response;
 use App\Addons\billingcore\Helpers\CreditsHelper;
 use App\Addons\billingplans\Helpers\InvoiceHelper;
 use App\Addons\billingplans\Helpers\SettingsHelper;
+use App\Addons\billingplans\Services\VdsProvisioningService;
 
 class PlansController
 {
@@ -227,6 +228,7 @@ class PlansController
                 : [];
         $plan = $this->applyCustomResourcesToPlan($plan, $customResources);
         $cleanCustomResources = $plan['custom_resources'] ?? [];
+        $isVds = ($plan['product_type'] ?? 'server') === 'vds';
 
         $chargeBreakdown = Plan::calculateChargeBreakdown($plan);
         $totalChargeCredits = (int) $chargeBreakdown['total_credits'];
@@ -285,7 +287,11 @@ class PlansController
                 );
             }
 
-            if (!CreditsHelper::removeUserCredits($userId, $chargeCreditsNow)) {
+            // Zero after a 100% coupon is a valid free checkout (no-op deduct).
+            if (
+                $chargeCreditsNow > 0
+                && !CreditsHelper::removeUserCredits($userId, $chargeCreditsNow)
+            ) {
                 return ApiResponse::error(
                     'Failed to deduct credits.',
                     'CREDITS_DEDUCTION_FAILED',
@@ -294,17 +300,36 @@ class PlansController
             }
         }
 
+        $refundCreditsIfNeeded = static function () use (
+            $skipInitialCharge,
+            $userId,
+            $chargeCreditsNow,
+        ): void {
+            if (!$skipInitialCharge && $chargeCreditsNow > 0) {
+                CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
+            }
+        };
+
         $effectiveRealmId = !empty($plan['realms_id'])
             ? (int) $plan['realms_id']
             : null;
-        if (!empty($plan['user_can_choose_realm'])) {
+        if (!$isVds && !empty($plan['user_can_choose_realm'])) {
             $chosenRealmId = isset($input['chosen_realm_id'])
                 ? (int) $input['chosen_realm_id']
                 : null;
+            $allowedRealmIds = Plan::decodeIds($plan['allowed_realms'] ?? null);
             if (!$chosenRealmId) {
-                if (!$skipInitialCharge) {
-                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
+                if (count($allowedRealmIds) === 1) {
+                    $chosenRealmId = (int) $allowedRealmIds[0];
+                } elseif ($allowedRealmIds === []) {
+                    $allRealms = Realm::getAll(null, 2, 0) ?: [];
+                    if (count($allRealms) === 1) {
+                        $chosenRealmId = (int) ($allRealms[0]['id'] ?? 0) ?: null;
+                    }
                 }
+            }
+            if (!$chosenRealmId) {
+                $refundCreditsIfNeeded();
 
                 return ApiResponse::error(
                     'Please select a realm (nest) for your server.',
@@ -312,14 +337,11 @@ class PlansController
                     400,
                 );
             }
-            $allowedRealmIds = Plan::decodeIds($plan['allowed_realms'] ?? null);
             if (
                 !empty($allowedRealmIds)
                 && !in_array($chosenRealmId, $allowedRealmIds, true)
             ) {
-                if (!$skipInitialCharge) {
-                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
-                }
+                $refundCreditsIfNeeded();
 
                 return ApiResponse::error(
                     'The selected realm is not allowed for this plan.',
@@ -333,14 +355,31 @@ class PlansController
         $effectiveSpellId = !empty($plan['spell_id'])
             ? (int) $plan['spell_id']
             : null;
-        if (!empty($plan['user_can_choose_spell'])) {
+        if (!$isVds && !empty($plan['user_can_choose_spell'])) {
             $chosenSpellId = isset($input['chosen_spell_id'])
                 ? (int) $input['chosen_spell_id']
                 : null;
+            $allowedSpellIds = Plan::decodeIds($plan['allowed_spells'] ?? null);
             if (!$chosenSpellId) {
-                if (!$skipInitialCharge) {
-                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
+                if (count($allowedSpellIds) === 1) {
+                    $chosenSpellId = (int) $allowedSpellIds[0];
+                } elseif ($allowedSpellIds === []) {
+                    $spellCandidates = Spell::getAllSpells() ?: [];
+                    if ($effectiveRealmId) {
+                        $spellCandidates = array_values(
+                            array_filter(
+                                $spellCandidates,
+                                static fn (array $spell): bool => (int) ($spell['realm_id'] ?? 0) === $effectiveRealmId,
+                            ),
+                        );
+                    }
+                    if (count($spellCandidates) === 1) {
+                        $chosenSpellId = (int) ($spellCandidates[0]['id'] ?? 0) ?: null;
+                    }
                 }
+            }
+            if (!$chosenSpellId) {
+                $refundCreditsIfNeeded();
 
                 return ApiResponse::error(
                     'Please select a spell (game type) for your server.',
@@ -348,14 +387,11 @@ class PlansController
                     400,
                 );
             }
-            $allowedSpellIds = Plan::decodeIds($plan['allowed_spells'] ?? null);
             if (
                 !empty($allowedSpellIds)
                 && !in_array($chosenSpellId, $allowedSpellIds, true)
             ) {
-                if (!$skipInitialCharge) {
-                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
-                }
+                $refundCreditsIfNeeded();
 
                 return ApiResponse::error(
                     'The selected spell is not allowed for this plan.',
@@ -366,12 +402,10 @@ class PlansController
             $effectiveSpellId = $chosenSpellId;
         }
 
-        if ($effectiveSpellId && $effectiveRealmId) {
+        if (!$isVds && $effectiveSpellId && $effectiveRealmId) {
             $spellRow = Spell::getSpellById($effectiveSpellId);
             if (!$spellRow) {
-                if (!$skipInitialCharge) {
-                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
-                }
+                $refundCreditsIfNeeded();
 
                 return ApiResponse::error(
                     'The selected game type is invalid.',
@@ -380,9 +414,7 @@ class PlansController
                 );
             }
             if ((int) ($spellRow['realm_id'] ?? 0) !== $effectiveRealmId) {
-                if (!$skipInitialCharge) {
-                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
-                }
+                $refundCreditsIfNeeded();
 
                 return ApiResponse::error(
                     'That spell does not belong to the selected realm. Choose a spell from the same realm.',
@@ -392,16 +424,14 @@ class PlansController
             }
         }
 
-        $planExpectsServer =
+        $planExpectsServer = !$isVds &&
             (!empty($plan['spell_id'])
                 || !empty($plan['user_can_choose_spell']))
             && (!empty($plan['realms_id'])
                 || !empty($plan['user_can_choose_realm']));
         if ($planExpectsServer) {
             if (!$effectiveRealmId) {
-                if (!$skipInitialCharge) {
-                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
-                }
+                $refundCreditsIfNeeded();
 
                 return ApiResponse::error(
                     'This product cannot create a server: no realm is set. An administrator must assign a realm on the plan or enable realm selection.',
@@ -410,9 +440,7 @@ class PlansController
                 );
             }
             if (!$effectiveSpellId) {
-                if (!$skipInitialCharge) {
-                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
-                }
+                $refundCreditsIfNeeded();
 
                 return ApiResponse::error(
                     'This product cannot create a server: no spell (server type) is set. An administrator must assign a spell on the plan or enable spell selection.',
@@ -422,9 +450,7 @@ class PlansController
             }
             $realmRow = Realm::getById($effectiveRealmId);
             if ($realmRow === null) {
-                if (!$skipInitialCharge) {
-                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
-                }
+                $refundCreditsIfNeeded();
 
                 return ApiResponse::error(
                     'The realm linked to this product was removed from the panel. An administrator must update the plan.',
@@ -434,9 +460,7 @@ class PlansController
             }
             $spellExists = Spell::getSpellById($effectiveSpellId);
             if ($spellExists === null) {
-                if (!$skipInitialCharge) {
-                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
-                }
+                $refundCreditsIfNeeded();
 
                 return ApiResponse::error(
                     'The spell linked to this product was removed from the panel. An administrator must update the plan.',
@@ -453,10 +477,13 @@ class PlansController
             $chosenLocationId = isset($input['chosen_location_id'])
                 ? (int) $input['chosen_location_id']
                 : null;
+            // Single-node / single-location plans: auto-select so fixed packages
+            // and trial redeem do not fail with LOCATION_REQUIRED.
+            if (!$chosenLocationId && count($availableLocationIds) === 1) {
+                $chosenLocationId = (int) $availableLocationIds[0];
+            }
             if (!$chosenLocationId) {
-                if (!$skipInitialCharge) {
-                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
-                }
+                $refundCreditsIfNeeded();
 
                 return ApiResponse::error(
                     'Please select a location for your server.',
@@ -465,9 +492,7 @@ class PlansController
                 );
             }
             if (!in_array($chosenLocationId, $availableLocationIds, true)) {
-                if (!$skipInitialCharge) {
-                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
-                }
+                $refundCreditsIfNeeded();
 
                 return ApiResponse::error(
                     'The selected location is not available for this plan.',
@@ -478,7 +503,23 @@ class PlansController
         }
 
         $serverUuid = null;
-        if ($effectiveSpellId && $effectiveRealmId) {
+        $vmCreationTaskId = null;
+        if ($isVds) {
+            $vdsResult = VdsProvisioningService::provision(
+                $plan,
+                $user,
+                isset($input['server_name']) ? (string) $input['server_name'] : null,
+            );
+            if (!$vdsResult['success']) {
+                $refundCreditsIfNeeded();
+                return ApiResponse::error(
+                    'Failed to provision VDS. Please contact staff.',
+                    (string) ($vdsResult['code'] ?? 'VDS_CREATE_FAILED'),
+                    500,
+                );
+            }
+            $vmCreationTaskId = $vdsResult['creation_task_id'] ?? null;
+        } elseif ($effectiveSpellId && $effectiveRealmId) {
             $planForProvision = $plan;
             $planForProvision['spell_id'] = $effectiveSpellId;
             $planForProvision['realms_id'] = $effectiveRealmId;
@@ -491,9 +532,7 @@ class PlansController
             if ($serverResult['success']) {
                 $serverUuid = $serverResult['uuid'];
             } else {
-                if (!$skipInitialCharge) {
-                    CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
-                }
+                $refundCreditsIfNeeded();
                 $provisionCode =
                     (string) ($serverResult['code'] ?? 'PROVISION_FAILED');
                 $rawProvisionError =
@@ -543,6 +582,7 @@ class PlansController
                 ? $couponContext['renewal_discount_credits'] ?? null
                 : null,
             'server_uuid' => $serverUuid,
+            'vm_creation_task_id' => $vmCreationTaskId,
             'status' => 'active',
             'next_renewal_at' => $nextRenewal,
             'custom_resources' => !empty($cleanCustomResources)
@@ -554,9 +594,7 @@ class PlansController
             if ($serverUuid) {
                 $this->cleanupProvisionedServer($serverUuid);
             }
-            if (!$skipInitialCharge) {
-                CreditsHelper::addUserCredits($userId, $chargeCreditsNow);
-            }
+            $refundCreditsIfNeeded();
 
             return ApiResponse::error(
                 'Failed to create subscription. Payment has been refunded.',
@@ -608,6 +646,8 @@ class PlansController
                 'new_credits_balance' => CreditsHelper::getUserCredits($userId),
                 'next_renewal_at' => $nextRenewal,
                 'server_uuid' => $serverUuid,
+                'vm_creation_task_id' => $vmCreationTaskId,
+                'product_type' => $isVds ? 'vds' : 'server',
                 'coupon' => $couponContext,
                 'initial_charge_skipped' => $skipInitialCharge,
                 'subscription_source' => $subscriptionSource,
@@ -641,6 +681,10 @@ class PlansController
         $plan['billing_period_label'] = Plan::getBillingPeriodLabel(
             (int) ($plan['billing_period_days'] ?? 30),
         );
+        $plan['product_type'] = ($plan['product_type'] ?? 'server') === 'vds' ? 'vds' : 'server';
+        if (is_string($plan['vds_config'] ?? null)) {
+            $plan['vds_config'] = json_decode($plan['vds_config'], true);
+        }
         $breakdown = Plan::calculateChargeBreakdown($plan);
         $plan['base_credits'] = (int) $breakdown['base_credits'];
         $plan['tax_rate_percent'] = (float) $breakdown['tax_rate_percent'];
@@ -653,7 +697,8 @@ class PlansController
         $plan['total_credits'] = (int) $breakdown['total_credits'];
         $plan['can_afford'] = $userCredits >= (int) $breakdown['total_credits'];
         $plan['has_server_template'] =
-            (!empty($plan['realms_id'])
+            $plan['product_type'] !== 'vds'
+            && (!empty($plan['realms_id'])
                 || !empty($plan['user_can_choose_realm']))
             && (!empty($plan['spell_id'])
                 || !empty($plan['user_can_choose_spell']));

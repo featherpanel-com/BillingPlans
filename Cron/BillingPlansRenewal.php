@@ -35,6 +35,7 @@ use App\Addons\billingplans\Helpers\InvoiceHelper;
 use App\Addons\billingplans\Helpers\SettingsHelper;
 use App\Addons\billingplans\Mail\SubscriptionSuspended;
 use App\Addons\billingplans\Mail\SubscriptionTerminated;
+use App\Addons\billingplans\Services\VdsProvisioningService;
 
 class BillingPlansRenewal implements TimeTask
 {
@@ -47,6 +48,7 @@ class BillingPlansRenewal implements TimeTask
                 $startTime = microtime(true);
 
                 $this->banner();
+                $this->syncPendingVdsSubscriptions();
                 $renewStats = $this->processRenewals();
                 $termStats = $this->processTerminations();
                 $cancelStats = $this->processCancellations();
@@ -154,6 +156,7 @@ class BillingPlansRenewal implements TimeTask
         }
         $periodDays = (int) ($subscription['billing_period_days'] ?? 30);
         $serverUuid = $subscription['server_uuid'] ?? null;
+        $isVds = ($subscription['product_type'] ?? 'server') === 'vds';
         $wasSuspended = $subscription['status'] === 'suspended';
 
         MinecraftColorCodeSupport::sendOutputWithNewLine(
@@ -195,7 +198,9 @@ class BillingPlansRenewal implements TimeTask
                 'server_suspend_sync' => 0,
             ]);
 
-            if ($serverUuid && SettingsHelper::getSuspendServers()) {
+            if ($isVds && SettingsHelper::getSuspendServers()) {
+                VdsProvisioningService::queuePowerAction($subscription, 'stop');
+            } elseif ($serverUuid && SettingsHelper::getSuspendServers()) {
                 $this->suspendServer($serverUuid, $subId, $app);
             }
 
@@ -226,7 +231,9 @@ class BillingPlansRenewal implements TimeTask
             'server_suspend_sync' => 0,
         ]);
 
-        if ($serverUuid && $wasSuspended && SettingsHelper::getUnsuspendOnRenewal()) {
+        if ($isVds && $wasSuspended && SettingsHelper::getUnsuspendOnRenewal()) {
+            VdsProvisioningService::queuePowerAction($subscription, 'start');
+        } elseif ($serverUuid && $wasSuspended && SettingsHelper::getUnsuspendOnRenewal()) {
             $this->unsuspendServer($serverUuid, $subId, $app);
         }
 
@@ -277,6 +284,7 @@ class BillingPlansRenewal implements TimeTask
             $planName = $subscription['plan_name'] ?? 'Unknown Plan';
             $userId = (int) $subscription['user_id'];
             $serverUuid = $subscription['server_uuid'] ?? null;
+            $isVds = ($subscription['product_type'] ?? 'server') === 'vds';
 
             $suspendedTimestamp = strtotime($suspendedAt);
             $terminateAfter = $suspendedTimestamp + ($terminationDays * 86400);
@@ -300,7 +308,11 @@ class BillingPlansRenewal implements TimeTask
                 "&c  [#$subId] ✘ Terminated — suspended {$daysElapsed}d (plan: $planName, user: #$userId)"
             );
 
-            if ($serverUuid) {
+            if ($isVds) {
+                if (VdsProvisioningService::queueDelete($subscription)) {
+                    ++$stats['servers_actioned'];
+                }
+            } elseif ($serverUuid) {
                 if ($this->deleteServer($serverUuid, $subId, $app)) {
                     ++$stats['servers_actioned'];
                 }
@@ -343,6 +355,7 @@ class BillingPlansRenewal implements TimeTask
             $userId = (int) $subscription['user_id'];
             $planName = $subscription['plan_name'] ?? 'Unknown Plan';
             $serverUuid = $subscription['server_uuid'];
+            $isVds = ($subscription['product_type'] ?? 'server') === 'vds';
             $chargeBreakdown = Plan::calculateChargeBreakdown($subscription);
             $priceCredits = (int) $chargeBreakdown['total_credits'];
 
@@ -356,7 +369,11 @@ class BillingPlansRenewal implements TimeTask
                 'server_suspend_sync' => 0,
             ]);
 
-            if ($serverUuid && SettingsHelper::getSuspendServers()) {
+            if ($isVds && SettingsHelper::getSuspendServers()) {
+                if (VdsProvisioningService::queuePowerAction($subscription, 'stop')) {
+                    ++$stats['servers_actioned'];
+                }
+            } elseif ($serverUuid && SettingsHelper::getSuspendServers()) {
                 if ($this->suspendServer($serverUuid, $subId, $app)) {
                     ++$stats['servers_actioned'];
                 }
@@ -370,6 +387,13 @@ class BillingPlansRenewal implements TimeTask
         }
 
         return $stats;
+    }
+
+    private function syncPendingVdsSubscriptions(): void
+    {
+        foreach (Subscription::getPendingVdsProvisioning() as $subscription) {
+            VdsProvisioningService::syncSubscription($subscription);
+        }
     }
 
     /**

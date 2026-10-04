@@ -12,6 +12,7 @@ export interface Plan {
     color: string | null;
   } | null;
   name: string;
+  product_type?: "server" | "vds";
   description: string | null;
   long_description: string | null;
   price_credits: number;
@@ -26,6 +27,7 @@ export interface Plan {
   billing_period_label: string;
   is_active: number;
   server_config?: Record<string, unknown> | null;
+  vds_config?: Record<string, unknown> | null;
   max_subscriptions: number | null;
   active_subscription_count?: number;
   slots_available?: number | null;
@@ -78,6 +80,8 @@ export interface Plan {
 export interface PlanFormData {
   category_id: number | null;
   name: string;
+  product_type: "server" | "vds";
+  vds_config?: Record<string, unknown> | null;
   description: string | null;
   long_description: string | null;
   price_credits: number;
@@ -134,6 +138,8 @@ export interface PlanOption {
 export interface PlanOptions {
   plans: PlanOption[];
   nodes: PlanOption[];
+  vm_nodes: PlanOption[];
+  vm_templates: (PlanOption & { guest_type?: string; vm_node_id?: number | null; storage?: string })[];
   realms: PlanOption[];
   spells: PlanOption[];
   categories: Array<{
@@ -308,6 +314,8 @@ export function useUserPlansAPI() {
     new_credits_balance: number;
     next_renewal_at: string;
     server_uuid: string | null;
+    vm_creation_task_id?: string | null;
+    product_type?: "server" | "vds";
   }> => {
     loading.value = true;
     try {

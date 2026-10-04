@@ -229,6 +229,8 @@ function openPlanFromUrl() {
   const current = window.location;
   const topLocation = topWindow.location;
   const hash = topLocation.hash || current.hash || "";
+  const params = new URLSearchParams(topLocation.search || current.search);
+  const couponFromUrl = (params.get("coupon") || params.get("code") || "").trim();
   const hashMatch = hash.match(/#\/get\/[^/]+\/(\d+)/);
   if (hashMatch?.[1]) {
     const hashPlanId = Number(hashMatch[1]);
@@ -236,13 +238,12 @@ function openPlanFromUrl() {
       const hashPlan = plans.value.find((p) => p.id === hashPlanId);
       if (hashPlan) {
         activeCategoryId.value = hashPlan.category_id ?? null;
-        startSubscribe(hashPlan);
+        startSubscribe(hashPlan, couponFromUrl || undefined);
         return;
       }
     }
   }
 
-  const params = new URLSearchParams(topLocation.search || current.search);
   const rawPlanId = params.get("plan");
   if (!rawPlanId) return;
   const planId = Number(rawPlanId);
@@ -252,7 +253,7 @@ function openPlanFromUrl() {
   if (params.get("category")) {
     activeCategoryId.value = plan.category_id ?? null;
   }
-  startSubscribe(plan);
+  startSubscribe(plan, couponFromUrl || undefined);
 }
 
 const subscribeFilteredSpells = computed(() => {
@@ -277,7 +278,8 @@ const subscribeFilteredSpells = computed(() => {
 const canConfirmSubscribe = computed(() => {
   const p = planToSubscribe.value;
   if (!p) return false;
-  if (subscribeLocationOptions.value.length > 0 && chosenLocationId.value == null) return false;
+  if (p.product_type === "vds") return true;
+  if (subscribeLocationOptions.value.length > 1 && chosenLocationId.value == null) return false;
   if (p.user_can_choose_realm && chosenRealmId.value == null) return false;
   if (p.user_can_choose_spell) {
     if (subscribeFilteredSpells.value.length === 0) return false;
@@ -293,6 +295,9 @@ watch(chosenRealmId, () => {
     !spells.some((s) => s.id === chosenSpellId.value)
   ) {
     chosenSpellId.value = null;
+  }
+  if (chosenSpellId.value == null && spells.length === 1) {
+    chosenSpellId.value = spells[0].id;
   }
 });
 
@@ -476,7 +481,7 @@ const scheduleCouponValidation = () => {
   }, 400);
 };
 
-const startSubscribe = (plan: Plan) => {
+const startSubscribe = (plan: Plan, initialCoupon?: string) => {
   if (plan.is_sold_out) {
     toast.error("This plan is sold out.");
     return;
@@ -508,7 +513,7 @@ const startSubscribe = (plan: Plan) => {
 
   planToSubscribe.value = plan;
   serverName.value = plan.name;
-  couponCode.value = "";
+  couponCode.value = (initialCoupon || "").trim().toUpperCase();
   couponPreview.value = null;
   couponError.value = null;
   chosenLocationId.value = null;
@@ -521,7 +526,13 @@ const startSubscribe = (plan: Plan) => {
   if (plan.user_can_choose_realm && plan.allowed_realms_options?.length === 1) {
     chosenRealmId.value = plan.allowed_realms_options[0].id;
   }
+  if (plan.user_can_choose_spell && plan.allowed_spells_options?.length === 1) {
+    chosenSpellId.value = plan.allowed_spells_options[0].id;
+  }
   shellView.value = "subscribe";
+  if (couponCode.value) {
+    scheduleCouponValidation();
+  }
 };
 
 const executeSubscribe = async () => {
@@ -549,7 +560,7 @@ const executeSubscribe = async () => {
     toast.success(
       `Subscribed to ${planToSubscribe.value.name}! Paid ${paidNow.toLocaleString()} credits` +
         (discountNow > 0 ? ` (${discountNow.toLocaleString()} discount applied)` : "") +
-        (result.server_uuid ? ". Your server is being set up." : "")
+        ((result.server_uuid || result.vm_creation_task_id) ? (planToSubscribe.value.product_type === "vds" ? ". Your VDS is being provisioned." : ". Your server is being set up.") : "")
     );
     closeSubscribeFlow();
     await loadData();
@@ -842,7 +853,7 @@ watch(
         </div>
 
         <div
-          v-if="subscribeLocationOptions.length > 0"
+          v-if="subscribeLocationOptions.length > 1"
           class="bg-card border border-border rounded-xl shadow-sm p-5 space-y-3"
         >
           <div>
@@ -864,7 +875,7 @@ watch(
         </div>
 
         <div
-          v-if="planToSubscribe.user_can_choose_realm && planToSubscribe.allowed_realms_options?.length"
+          v-if="planToSubscribe.user_can_choose_realm && (planToSubscribe.allowed_realms_options?.length ?? 0) > 1"
           class="bg-card border border-border rounded-xl shadow-sm p-5 space-y-3"
         >
           <div>
@@ -886,7 +897,7 @@ watch(
         </div>
 
         <div
-          v-if="planToSubscribe.user_can_choose_spell && planToSubscribe.allowed_spells_options?.length"
+          v-if="planToSubscribe.user_can_choose_spell && (planToSubscribe.allowed_spells_options?.length ?? 0) > 1"
           class="bg-card border border-border rounded-xl shadow-sm p-5 space-y-3"
         >
           <div>
@@ -914,9 +925,9 @@ watch(
           </div>
         </div>
 
-        <div v-if="planToSubscribe.has_server_template" class="bg-card border border-border rounded-xl shadow-sm p-5 space-y-3">
+        <div v-if="planToSubscribe.has_server_template || planToSubscribe.product_type === 'vds'" class="bg-card border border-border rounded-xl shadow-sm p-5 space-y-3">
           <div>
-            <label class="block text-xs font-medium text-muted-foreground mb-1.5">Server name</label>
+            <label class="block text-xs font-medium text-muted-foreground mb-1.5">{{ planToSubscribe.product_type === 'vds' ? 'Hostname' : 'Server name' }}</label>
             <input
               v-model="serverName"
               type="text"
@@ -924,7 +935,7 @@ watch(
               maxlength="100"
               class="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             />
-            <p class="text-xs text-muted-foreground mt-1.5">Shown in your server list.</p>
+            <p class="text-xs text-muted-foreground mt-1.5">{{ planToSubscribe.product_type === 'vds' ? 'Used as the VM hostname.' : 'Shown in your server list.' }}</p>
           </div>
         </div>
 
@@ -1006,12 +1017,18 @@ watch(
         <button
           type="button"
           @click="executeSubscribe"
-          :disabled="subscribing || !canConfirmSubscribe"
+          :disabled="subscribing || !canConfirmSubscribe || balanceAfter < 0"
           class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-6 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none transition-colors shadow-sm"
         >
           <Loader2 v-if="subscribing" class="h-4 w-4 animate-spin" />
           <ShoppingCart v-else class="h-4 w-4" />
-          Confirm and pay
+          {{
+            liveTotalCredits <= 0
+              ? 'Confirm free order'
+              : balanceAfter < 0
+                ? 'Insufficient credits'
+                : 'Confirm and pay'
+          }}
         </button>
       </div>
     </div>
@@ -1262,7 +1279,7 @@ watch(
               <div v-if="!isPublicMode && !plan.can_afford && !plan.is_sold_out && canSubscribeMore"
                 class="flex items-center gap-2 text-xs text-amber-500 bg-amber-500/10 rounded-lg px-3 py-2 mb-3">
                 <AlertTriangle class="h-3.5 w-3.5 shrink-0" />
-                <span>Need {{ ((plan.total_credits ?? plan.price_credits) - userCredits).toLocaleString() }} more credits</span>
+                <span>Need {{ ((plan.total_credits ?? plan.price_credits) - userCredits).toLocaleString() }} more credits — or enter a coupon at checkout</span>
               </div>
               <div v-else-if="!isPublicMode && !canSubscribeMore && !plan.is_sold_out"
                 class="flex items-center gap-2 text-xs text-amber-500 bg-amber-500/10 rounded-lg px-3 py-2 mb-3">
@@ -1276,10 +1293,10 @@ watch(
               <div class="flex items-center gap-2">
                 <button
                   @click="startSubscribe(plan)"
-                  :disabled="!!plan.is_sold_out || (!isPublicMode && (!plan.can_afford || !canSubscribeMore))"
+                  :disabled="!!plan.is_sold_out || (!isPublicMode && !canSubscribeMore)"
                   :class="[
                     'flex-1 inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors',
-                    (!plan.is_sold_out && (isPublicMode || (plan.can_afford && canSubscribeMore)))
+                    (!plan.is_sold_out && (isPublicMode || canSubscribeMore))
                       ? 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm'
                       : 'bg-muted text-muted-foreground cursor-not-allowed',
                   ]"
@@ -1292,9 +1309,7 @@ watch(
                         ? 'Login to Subscribe'
                         : !canSubscribeMore
                           ? 'Limit Reached'
-                          : !plan.can_afford
-                            ? 'Insufficient Credits'
-                            : 'Subscribe Now'
+                          : 'Subscribe Now'
                   }}
                 </button>
                 <button
@@ -1362,11 +1377,12 @@ watch(
                   </div>
 
 
-                  <div v-if="sub.server_uuid" class="flex items-center gap-2 bg-muted/20 rounded-lg px-3 py-2 mb-3">
-                    <Server class="h-3.5 w-3.5 text-primary shrink-0" />
+                  <div v-if="sub.server_uuid || sub.vm_instance_id || sub.vm_creation_task_id" class="flex items-center gap-2 bg-muted/20 rounded-lg px-3 py-2 mb-3">
+                    <HardDrive v-if="sub.product_type === 'vds'" class="h-3.5 w-3.5 text-primary shrink-0" />
+                    <Server v-else class="h-3.5 w-3.5 text-primary shrink-0" />
                     <div class="min-w-0">
-                      <p class="text-[10px] text-muted-foreground uppercase tracking-wide">Server</p>
-                      <p class="text-xs font-mono text-muted-foreground truncate">{{ sub.server_uuid }}</p>
+                      <p class="text-[10px] text-muted-foreground uppercase tracking-wide">{{ sub.product_type === 'vds' ? 'VDS' : 'Server' }}</p>
+                      <p class="text-xs font-mono text-muted-foreground truncate">{{ sub.server_uuid || (sub.vm_instance_id ? `VM #${sub.vm_instance_id}` : 'Provisioning…') }}</p>
                     </div>
                     <CheckCircle2 class="h-3.5 w-3.5 text-emerald-400 shrink-0 ml-auto" />
                   </div>
