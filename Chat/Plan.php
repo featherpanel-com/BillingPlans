@@ -126,7 +126,7 @@ class Plan
                     ? (int) $data['category_id']
                     : null,
             'name' => $data['name'],
-            'product_type' => in_array(($data['product_type'] ?? 'server'), ['server', 'vds'], true)
+            'product_type' => in_array($data['product_type'] ?? 'server', ['server', 'vds'], true)
                 ? $data['product_type']
                 : 'server',
             'description' => $data['description'] ?? null,

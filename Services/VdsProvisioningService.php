@@ -1,16 +1,31 @@
 <?php
 
+/*
+ * This file is part of FeatherPanel.
+ *
+ * Copyright (C) 2025 MythicalSystems Studios
+ * Copyright (C) 2025 FeatherPanel Contributors
+ * Copyright (C) 2025 Cassian Gherman (aka NaysKutzu)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * See the LICENSE file or <https://www.gnu.org/licenses/>.
+ */
+
 namespace App\Addons\billingplans\Services;
 
-use App\Chat\VmInstance;
 use App\Chat\VmIp;
 use App\Chat\VmNode;
 use App\Chat\VmTask;
+use App\Chat\VmInstance;
 use App\Chat\VmTemplate;
-use App\Controllers\Admin\VmInstancesController;
 use App\Services\Vm\VmInstanceUtil;
-use App\Addons\billingplans\Chat\Subscription;
 use Symfony\Component\HttpFoundation\Request;
+use App\Addons\billingplans\Chat\Subscription;
+use App\Controllers\Admin\VmInstancesController;
 
 class VdsProvisioningService
 {
@@ -118,6 +133,7 @@ class VdsProvisioningService
                 'suspended_at' => date('Y-m-d H:i:s'),
                 'vm_creation_task_id' => null,
             ]);
+
             return false;
         }
         if (!in_array($status, ['completed', 'complete', 'success', 'successful'], true)) {
@@ -174,6 +190,7 @@ class VdsProvisioningService
     private static function instanceFor(array $subscription): ?array
     {
         $instanceId = (int) ($subscription['vm_instance_id'] ?? 0);
+
         return $instanceId > 0 ? VmInstance::getById($instanceId) : null;
     }
 
@@ -185,6 +202,7 @@ class VdsProvisioningService
                 return $node;
             }
         }
+
         return null;
     }
 
@@ -194,12 +212,14 @@ class VdsProvisioningService
             return $raw;
         }
         $decoded = is_string($raw) ? json_decode($raw, true) : null;
+
         return is_array($decoded) ? $decoded : [];
     }
 
     private static function intList(mixed $value): array
     {
         $values = is_array($value) ? $value : [$value];
+
         return array_values(array_filter(array_map('intval', $values), static fn (int $id): bool => $id > 0));
     }
 
@@ -208,6 +228,7 @@ class VdsProvisioningService
         $value = trim((string) ($customName ?: $planName . '-' . $username));
         $value = strtolower((string) preg_replace('/[^a-z0-9.-]+/i', '-', $value));
         $value = trim($value, '-.');
+
         return substr($value !== '' ? $value : 'vds', 0, 63);
     }
 

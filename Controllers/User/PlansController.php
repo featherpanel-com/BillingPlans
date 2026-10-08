@@ -424,8 +424,8 @@ class PlansController
             }
         }
 
-        $planExpectsServer = !$isVds &&
-            (!empty($plan['spell_id'])
+        $planExpectsServer = !$isVds
+            && (!empty($plan['spell_id'])
                 || !empty($plan['user_can_choose_spell']))
             && (!empty($plan['realms_id'])
                 || !empty($plan['user_can_choose_realm']));
@@ -512,6 +512,7 @@ class PlansController
             );
             if (!$vdsResult['success']) {
                 $refundCreditsIfNeeded();
+
                 return ApiResponse::error(
                     'Failed to provision VDS. Please contact staff.',
                     (string) ($vdsResult['code'] ?? 'VDS_CREATE_FAILED'),
