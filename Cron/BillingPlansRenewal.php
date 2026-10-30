@@ -425,7 +425,7 @@ class BillingPlansRenewal implements TimeTask
             $node = Node::getNodeById((int) $server['node_id']);
             if ($node) {
                 try {
-                    $wings = new Wings($node['fqdn'], $node['daemonListen'], $node['scheme'], $node['daemon_token'], 30);
+                    $wings = Wings::fromNode($node, 30);
                     $wings->getServer()->deleteServer($uuid);
                 } catch (\Exception $e) {
                     $app->getLogger()->error("BillingPlans: Wings deletion failed for $uuid: " . $e->getMessage());
