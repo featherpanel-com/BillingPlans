@@ -1031,13 +1031,7 @@ class PlansController
                 );
             }
 
-            $wings = new Wings(
-                $node['fqdn'],
-                $node['daemonListen'],
-                $node['scheme'],
-                $node['daemon_token'],
-                30,
-            );
+            $wings = Wings::fromNode($node, 30);
             $response = $wings
                 ->getServer()
                 ->createServer([
